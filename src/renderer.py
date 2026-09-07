@@ -141,7 +141,11 @@ class CanvasRenderer:
 
         quad_normalized = quad.copy()
         quad_normalized[:, 0] = (quad[:, 0] / self.canvas_width) * 2.0 - 1.0
-        quad_normalized[:, 1] = (quad[:, 1] / self.canvas_height) * 2.0 - 1.0
+        # Corners are in top-left-origin, y-down pixel space (matching what
+        # calibration mode shows and saves), but OpenGL clip space is
+        # y-up (-1 = bottom, +1 = top). Without flipping, a corner
+        # calibrated near the top of the screen renders near the bottom.
+        quad_normalized[:, 1] = 1.0 - (quad[:, 1] / self.canvas_height) * 2.0
 
         vertices = np.array([
             quad_normalized[0, 0], quad_normalized[0, 1], 0, 0,
