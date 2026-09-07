@@ -28,7 +28,19 @@ class CanvasRenderer:
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
-        pygame.display.set_mode((self.canvas_width, self.canvas_height), flags | pygame.DOUBLEBUF | pygame.OPENGL)
+        if self.fullscreen:
+            # Use the display's actual native resolution rather than
+            # canvas_width/height -- forcing a resolution the display
+            # doesn't natively support (e.g. on a Retina Mac) makes
+            # fullscreen fail to cover the screen. Passing (0, 0) instead
+            # would sidestep that, but on macOS it makes SDL fall back to a
+            # borderless "fullscreen desktop" window (looks maximized,
+            # menu bar/dock still reachable) rather than a true fullscreen
+            # Space transition, so we look up and pass the real size.
+            window_size = pygame.display.get_desktop_sizes()[0]
+        else:
+            window_size = (self.canvas_width, self.canvas_height)
+        pygame.display.set_mode(window_size, flags | pygame.DOUBLEBUF | pygame.OPENGL)
         pygame.display.set_caption("Projection Mapper")
 
         self.ctx = mgl.create_context()
