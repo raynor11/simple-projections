@@ -30,7 +30,7 @@ def main():
     canvas_width = canvas_cfg.get('width', 1920)
     canvas_height = canvas_cfg.get('height', 1080)
 
-    fullscreen = not args.windowed and is_raspberry_pi()
+    fullscreen = not args.windowed
 
     print(f"Canvas: {canvas_width}x{canvas_height}")
     print(f"Fullscreen: {fullscreen}")
