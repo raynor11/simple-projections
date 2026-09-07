@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from src.config_io import load_config, validate_config
-from src.platform_io import get_display_size, setup_fullscreen_window, is_raspberry_pi
+from src.platform_io import is_raspberry_pi
 from src.renderer import CanvasRenderer
 from src.calibration import CalibrationUI
 

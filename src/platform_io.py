@@ -46,24 +46,3 @@ def get_gpu_name():
         return "Apple GPU"
     else:
         return "Unknown GPU"
-
-
-def get_display_size():
-    """
-    Get native display resolution.
-    On Pi, may need to be determined from config or environment.
-    For now, returns a reasonable default.
-    """
-    if is_raspberry_pi():
-        return (1080, 1920)
-    else:
-        return (1920, 1080)
-
-
-def setup_fullscreen_window(width, height):
-    """
-    Prepare for fullscreen output.
-    On Pi, might configure HDMI rotation etc.
-    Returns True if successful.
-    """
-    return True

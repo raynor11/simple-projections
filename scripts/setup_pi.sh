@@ -15,8 +15,8 @@ sudo apt-get install -y \
     libsdl2-dev
 
 echo "Creating Python virtual environment..."
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 echo "Installing Python packages..."
 pip install --upgrade pip setuptools wheel

@@ -9,7 +9,7 @@ User=pi
 WorkingDirectory=/home/pi/projection-mapper
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=/home/pi/.Xauthority"
-ExecStart=/home/pi/projection-mapper/venv/bin/python main.py --play
+ExecStart=/home/pi/projection-mapper/.venv/bin/python main.py --play
 Restart=on-failure
 RestartSec=5
 
