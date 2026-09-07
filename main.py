@@ -16,6 +16,9 @@ def main():
     parser.add_argument("--play", action="store_true", help="Run in playback mode (default)")
     parser.add_argument("--windowed", action="store_true", help="Run windowed (dev mode)")
     parser.add_argument("--config", type=str, default="config/frames.json", help="Path to config file")
+    parser.add_argument("--display", type=int, default=None,
+                         help="Index of the display to use for fullscreen (see printed list). "
+                              "Defaults to the display matching the canvas resolution, or 0.")
 
     args = parser.parse_args()
 
@@ -36,20 +39,42 @@ def main():
     print(f"Fullscreen: {fullscreen}")
     print(f"Platform: {'Raspberry Pi' if is_raspberry_pi() else 'macOS/Linux'}")
 
+    display_index = 0
+    if fullscreen:
+        pygame.init()
+        sizes = pygame.display.get_desktop_sizes()
+        print("Available displays:")
+        for i, size in enumerate(sizes):
+            print(f"  {i}: {size[0]}x{size[1]}")
+
+        if args.display is not None:
+            if not 0 <= args.display < len(sizes):
+                print(f"Error: --display {args.display} out of range (0-{len(sizes) - 1})")
+                sys.exit(1)
+            display_index = args.display
+        else:
+            matches = [i for i, size in enumerate(sizes) if size == (canvas_width, canvas_height)]
+            if matches:
+                display_index = matches[0]
+            else:
+                print(f"Warning: no display matches canvas {canvas_width}x{canvas_height}; "
+                      f"using display 0. Pass --display N to pick a specific one.")
+        print(f"Using display {display_index}")
+
     if args.calibrate:
-        run_calibration(config, canvas_width, canvas_height, fullscreen)
+        run_calibration(config, canvas_width, canvas_height, fullscreen, display_index)
     else:
-        run_playback(config, canvas_width, canvas_height, fullscreen)
+        run_playback(config, canvas_width, canvas_height, fullscreen, display_index)
 
 
-def run_calibration(config, canvas_width, canvas_height, fullscreen):
+def run_calibration(config, canvas_width, canvas_height, fullscreen, display_index=0):
     """Run calibration mode."""
     pygame.init()
     flags = pygame.FULLSCREEN if fullscreen else 0
     # See renderer.py's init_gl for why fullscreen uses the display's real
     # native resolution instead of canvas_width/height or (0, 0).
-    window_size = pygame.display.get_desktop_sizes()[0] if fullscreen else (canvas_width, canvas_height)
-    screen = pygame.display.set_mode(window_size, flags)
+    window_size = pygame.display.get_desktop_sizes()[display_index] if fullscreen else (canvas_width, canvas_height)
+    screen = pygame.display.set_mode(window_size, flags, display=display_index)
     pygame.display.set_caption("Projection Mapper - Calibration")
     clock = pygame.time.Clock()
 
@@ -75,9 +100,9 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen):
     pygame.quit()
 
 
-def run_playback(config, canvas_width, canvas_height, fullscreen):
+def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=0):
     """Run playback mode."""
-    renderer = CanvasRenderer(canvas_width, canvas_height, fullscreen=fullscreen)
+    renderer = CanvasRenderer(canvas_width, canvas_height, fullscreen=fullscreen, display_index=display_index)
 
     try:
         renderer.init_gl()

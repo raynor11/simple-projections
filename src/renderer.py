@@ -9,10 +9,11 @@ from .media_loader import MediaLoader
 class CanvasRenderer:
     """Manages OpenGL rendering of warped frames onto a canvas."""
 
-    def __init__(self, canvas_width, canvas_height, fullscreen=False):
+    def __init__(self, canvas_width, canvas_height, fullscreen=False, display_index=0):
         self.canvas_width = canvas_width
         self.canvas_height = canvas_height
         self.fullscreen = fullscreen
+        self.display_index = display_index
         self.ctx = None
         self.program = None
         self.vao = None
@@ -37,10 +38,10 @@ class CanvasRenderer:
             # borderless "fullscreen desktop" window (looks maximized,
             # menu bar/dock still reachable) rather than a true fullscreen
             # Space transition, so we look up and pass the real size.
-            window_size = pygame.display.get_desktop_sizes()[0]
+            window_size = pygame.display.get_desktop_sizes()[self.display_index]
         else:
             window_size = (self.canvas_width, self.canvas_height)
-        pygame.display.set_mode(window_size, flags | pygame.DOUBLEBUF | pygame.OPENGL)
+        pygame.display.set_mode(window_size, flags | pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
         pygame.display.set_caption("Projection Mapper")
 
         self.ctx = mgl.create_context()
