@@ -22,8 +22,8 @@ A lightweight, cross-platform projection mapping tool for Raspberry Pi and macOS
 ### macOS (Development)
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
