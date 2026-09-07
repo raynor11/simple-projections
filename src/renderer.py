@@ -115,13 +115,12 @@ class CanvasRenderer:
             img, src_w, src_h = frame_data
 
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img_flipped = cv2.flip(img_rgb, 0)
-            img_flipped = np.ascontiguousarray(img_flipped)
+            img_rgb = np.ascontiguousarray(img_rgb)
 
             texture = self.ctx.texture(
                 (src_w, src_h),
                 3,
-                img_flipped.tobytes()
+                img_rgb.tobytes()
             )
 
             self._render_quad(frame_config, src_w, src_h, texture)
