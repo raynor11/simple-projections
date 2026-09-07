@@ -26,6 +26,8 @@ class CanvasRenderer:
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
+        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
+        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
         pygame.display.set_mode((self.canvas_width, self.canvas_height), flags | pygame.DOUBLEBUF | pygame.OPENGL)
         pygame.display.set_caption("Projection Mapper")
 
@@ -61,7 +63,7 @@ class CanvasRenderer:
         }
         """
 
-        self.program = self.ctx.program(vertex_src=vertex_src, fragment_src=fragment_src)
+        self.program = self.ctx.program(vertex_shader=vertex_src, fragment_shader=fragment_src)
 
     def _create_canvas_framebuffer(self):
         """Create framebuffer for off-screen canvas rendering."""
