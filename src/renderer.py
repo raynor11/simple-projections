@@ -23,7 +23,6 @@ class CanvasRenderer:
 
     def init_gl(self):
         """Initialize pygame and OpenGL context."""
-        flags = pygame.FULLSCREEN if self.fullscreen else 0
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
@@ -39,9 +38,17 @@ class CanvasRenderer:
             # menu bar/dock still reachable) rather than a true fullscreen
             # Space transition, so we look up and pass the real size.
             window_size = pygame.display.get_desktop_sizes()[self.display_index]
+            # Requesting FULLSCREEN at window creation can race with macOS
+            # granting the freshly-launched process focus, silently
+            # dropping the fullscreen Space transition. Create windowed
+            # first, let the event queue settle, then switch to fullscreen.
+            pygame.display.set_mode(window_size, pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
+            pygame.event.pump()
+            pygame.time.wait(100)
+            pygame.display.set_mode(window_size, pygame.FULLSCREEN | pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
         else:
             window_size = (self.canvas_width, self.canvas_height)
-        pygame.display.set_mode(window_size, flags | pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
+            pygame.display.set_mode(window_size, pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
         pygame.display.set_caption("Projection Mapper")
 
         self.ctx = mgl.create_context()

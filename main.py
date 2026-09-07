@@ -70,11 +70,18 @@ def main():
 def run_calibration(config, canvas_width, canvas_height, fullscreen, display_index=0):
     """Run calibration mode."""
     pygame.init()
-    flags = pygame.FULLSCREEN if fullscreen else 0
-    # See renderer.py's init_gl for why fullscreen uses the display's real
-    # native resolution instead of canvas_width/height or (0, 0).
-    window_size = pygame.display.get_desktop_sizes()[display_index] if fullscreen else (canvas_width, canvas_height)
-    screen = pygame.display.set_mode(window_size, flags, display=display_index)
+    if fullscreen:
+        # See renderer.py's init_gl for why fullscreen uses the display's
+        # real native resolution instead of canvas_width/height or (0, 0),
+        # and why it's created windowed first then switched to fullscreen.
+        window_size = pygame.display.get_desktop_sizes()[display_index]
+        pygame.display.set_mode(window_size, display=display_index)
+        pygame.event.pump()
+        pygame.time.wait(100)
+        screen = pygame.display.set_mode(window_size, pygame.FULLSCREEN, display=display_index)
+    else:
+        window_size = (canvas_width, canvas_height)
+        screen = pygame.display.set_mode(window_size, display=display_index)
     pygame.display.set_caption("Projection Mapper - Calibration")
     clock = pygame.time.Clock()
 
