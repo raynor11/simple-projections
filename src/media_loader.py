@@ -35,13 +35,12 @@ class MediaLoader:
             self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
 
         elif suffix in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
-            import cv2
             img = cv2.imread(str(self.media_path))
             if img is None:
                 raise RuntimeError(f"Failed to load image: {self.media_path}")
 
             self.is_video = False
-            self.height, self.width = img[:2]
+            self.height, self.width = img.shape[:2]
             self.total_frames = 1
             self.fps = 30
         else:
