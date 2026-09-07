@@ -29,7 +29,7 @@ def validate_config(config):
         raise ValueError(f"Config missing required keys: {required_keys}")
 
     canvas = config.get("canvas", {})
-    for key in ["width", "height", "orientation"]:
+    for key in ["width", "height"]:
         if key not in canvas:
             raise ValueError(f"Canvas missing key: {key}")
 

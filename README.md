@@ -73,8 +73,7 @@ Frame configuration is stored in `config/frames.json`:
 {
   "canvas": {
     "width": 1080,
-    "height": 1920,
-    "orientation": "portrait"
+    "height": 1920
   },
   "frames": [
     {
@@ -92,7 +91,7 @@ Frame configuration is stored in `config/frames.json`:
 }
 ```
 
-- `canvas`: Output resolution and orientation
+- `canvas`: Output resolution (width/height)
 - `frames[].media`: Path to video/image file
 - `corners`: 4-point quad in canvas pixel space
 

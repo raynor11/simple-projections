@@ -45,8 +45,7 @@ def test_validate_config():
     valid_config = {
         "canvas": {
             "width": 1080,
-            "height": 1920,
-            "orientation": "portrait"
+            "height": 1920
         },
         "frames": [
             {
