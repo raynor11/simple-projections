@@ -219,4 +219,5 @@ __marimo__/
 
 # Project-specific: user media and local calibration data
 media/
-config/frames.json
+config/*.json
+!config/frames.example.json
