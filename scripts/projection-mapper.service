@@ -1,0 +1,17 @@
+[Unit]
+Description=Projection Mapper
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/projection-mapper
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/pi/.Xauthority"
+ExecStart=/home/pi/projection-mapper/venv/bin/python main.py --play
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

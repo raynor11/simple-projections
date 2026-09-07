@@ -1,0 +1,20 @@
+{
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "orientation": "portrait"
+  },
+  "frames": [
+    {
+      "id": "frame_1",
+      "label": "Sample frame",
+      "media": "media/sample.mp4",
+      "corners": {
+        "tl": [120, 200],
+        "tr": [420, 210],
+        "br": [415, 610],
+        "bl": [115, 600]
+      }
+    }
+  ]
+}
