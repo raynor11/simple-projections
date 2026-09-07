@@ -29,8 +29,14 @@ def compute_homography(source_rect, dest_quad):
 
     H = cv2.getPerspectiveTransform(src_points, dst_points)
 
+    # Embed the 3x3 homography into the 4x4 matrix so that, for a vertex
+    # shader computing `transform * vec4(x, y, 0, 1)`, the GPU's hardware
+    # perspective divide (by the resulting w) reproduces H's projective
+    # divide. Rows/cols 0,1 carry H's x/y terms, row/col 2 (z) passes
+    # through untouched, and row/col 3 carries H's translation/w terms.
     H_4x4 = np.eye(4, dtype=np.float32)
-    H_4x4[:2, :3] = H
+    rows_cols = [0, 1, 3]
+    H_4x4[np.ix_(rows_cols, rows_cols)] = H
 
     return H_4x4
 
@@ -47,11 +53,12 @@ def homography_to_corners(homography, source_w, source_h):
         [0, source_h, 1]
     ], dtype=np.float32).T
 
-    H = homography[:2, :3]
+    rows_cols = [0, 1, 3]
+    H = homography[np.ix_(rows_cols, rows_cols)]
     dst = H @ src_corners
-    dst = dst / dst[1, :]
+    dst = dst / dst[2, :]
 
-    return dst.T
+    return dst[:2, :].T
 
 
 def nudge_corner(quad, corner_name, dx, dy):
