@@ -37,15 +37,19 @@ def main():
     print(f"Platform: {'Raspberry Pi' if is_raspberry_pi() else 'macOS/Linux'}")
 
     if args.calibrate:
-        run_calibration(config, canvas_width, canvas_height)
+        run_calibration(config, canvas_width, canvas_height, fullscreen)
     else:
         run_playback(config, canvas_width, canvas_height, fullscreen)
 
 
-def run_calibration(config, canvas_width, canvas_height):
+def run_calibration(config, canvas_width, canvas_height, fullscreen):
     """Run calibration mode."""
     pygame.init()
-    screen = pygame.display.set_mode((canvas_width, canvas_height))
+    flags = pygame.FULLSCREEN if fullscreen else 0
+    # See renderer.py's init_gl for why fullscreen uses the display's real
+    # native resolution instead of canvas_width/height or (0, 0).
+    window_size = pygame.display.get_desktop_sizes()[0] if fullscreen else (canvas_width, canvas_height)
+    screen = pygame.display.set_mode(window_size, flags)
     pygame.display.set_caption("Projection Mapper - Calibration")
     clock = pygame.time.Clock()
 
