@@ -23,11 +23,13 @@ def main():
     args = parser.parse_args()
 
     try:
-        config = load_config()
+        config = load_config(args.config)
         validate_config(config)
     except Exception as e:
         print(f"Error loading config: {e}")
         sys.exit(1)
+
+    print(f"Config: {args.config}")
 
     canvas_cfg = config.get('canvas', {})
     canvas_width = canvas_cfg.get('width', 1920)
@@ -62,12 +64,12 @@ def main():
         print(f"Using display {display_index}")
 
     if args.calibrate:
-        run_calibration(config, canvas_width, canvas_height, fullscreen, display_index)
+        run_calibration(config, canvas_width, canvas_height, fullscreen, display_index, args.config)
     else:
         run_playback(config, canvas_width, canvas_height, fullscreen, display_index)
 
 
-def run_calibration(config, canvas_width, canvas_height, fullscreen, display_index=0):
+def run_calibration(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None):
     """Run calibration mode."""
     pygame.init()
     if fullscreen:
@@ -85,7 +87,7 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
     pygame.display.set_caption("Projection Mapper - Calibration")
     clock = pygame.time.Clock()
 
-    ui = CalibrationUI(canvas_width, canvas_height, config)
+    ui = CalibrationUI(canvas_width, canvas_height, config, config_path=config_path)
 
     print("Calibration Mode")
     print("Controls:")

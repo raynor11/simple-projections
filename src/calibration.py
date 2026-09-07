@@ -6,10 +6,11 @@ from .homography import nudge_corner
 class CalibrationUI:
     """Interactive calibration mode for adjusting frame corners."""
 
-    def __init__(self, canvas_width, canvas_height, config):
+    def __init__(self, canvas_width, canvas_height, config, config_path=None):
         self.canvas_width = canvas_width
         self.canvas_height = canvas_height
         self.config = config
+        self.config_path = config_path
         self.current_frame_idx = 0
         self.current_corner = 'tl'
         self.running = True
@@ -143,7 +144,10 @@ class CalibrationUI:
     def _save_config(self):
         """Save config to disk."""
         try:
-            save_config(self.config)
+            if self.config_path:
+                save_config(self.config, self.config_path)
+            else:
+                save_config(self.config)
             self.modified = False
             print("Config saved!")
         except Exception as e:
@@ -152,7 +156,7 @@ class CalibrationUI:
     def _load_config(self):
         """Reload config from disk."""
         try:
-            self.config = load_config()
+            self.config = load_config(self.config_path) if self.config_path else load_config()
             self.current_frame_idx = 0
             self.current_corner = 'tl'
             self.modified = False

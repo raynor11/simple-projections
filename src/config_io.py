@@ -6,19 +6,21 @@ from pathlib import Path
 CONFIG_PATH = Path("config/frames.json")
 
 
-def load_config():
+def load_config(path=CONFIG_PATH):
     """Load frames.json config."""
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
 
-    with open(CONFIG_PATH) as f:
+    with open(path) as f:
         return json.load(f)
 
 
-def save_config(config):
+def save_config(config, path=CONFIG_PATH):
     """Save frames.json config."""
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, 'w') as f:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w') as f:
         json.dump(config, f, indent=2)
 
 
