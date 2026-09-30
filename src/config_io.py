@@ -117,6 +117,25 @@ def _check_source(source, what):
             raise ValueError(f"{what} {kind} source missing key: {key}")
 
 
+def _check_projector(projector, location):
+    from .projector.viewsonic import DEFAULT_LIGHT_SOURCE_MODES
+    if "serial" not in projector:
+        raise ValueError("Projector missing key: serial")
+    modes = projector.get("light_source_modes") or DEFAULT_LIGHT_SOURCE_MODES
+    brightness = projector.get("brightness")
+    if brightness is not None:
+        if location is None:
+            raise ValueError("Projector brightness needs a top-level \"location\" for sunrise/sunset")
+        for phase in ("day", "dusk", "night"):
+            if phase in brightness and brightness[phase] not in modes:
+                raise ValueError(f"Projector brightness {phase}: unknown light source mode "
+                                 f"{brightness[phase]!r} (known: {', '.join(modes)})")
+    opcode = projector.get("light_source_opcode")
+    if opcode is not None and not (isinstance(opcode, list) and len(opcode) == 2
+                                   and all(isinstance(b, int) and 0 <= b <= 255 for b in opcode)):
+        raise ValueError("Projector light_source_opcode must be two bytes, e.g. [17, 16]")
+
+
 def validate_config(config):
     """Validate config structure. Raises ValueError describing the first problem found."""
     required_keys = {"canvas", "frames"}
@@ -139,6 +158,10 @@ def validate_config(config):
         for key in ("lat", "lon"):
             if not isinstance(location.get(key), (int, float)):
                 raise ValueError(f"Location missing numeric {key}")
+
+    projector = config.get("projector")
+    if projector is not None:
+        _check_projector(projector, location)
 
     seen_ids = set()
     for frame in config.get("frames", []):

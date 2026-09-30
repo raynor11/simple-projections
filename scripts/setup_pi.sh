@@ -33,7 +33,8 @@ sudo apt-get install -y \
     gstreamer1.0-libav \
     avahi-daemon \
     uxplay \
-    v4l2loopback-dkms
+    v4l2loopback-dkms \
+    nut
 
 echo "Creating Python virtual environment..."
 python3 -m venv --system-site-packages .venv
@@ -59,6 +60,18 @@ echo v4l2loopback | sudo tee /etc/modules-load.d/v4l2loopback.conf > /dev/null
 sudo modprobe v4l2loopback || echo "v4l2loopback will load after reboot"
 sudo cp scripts/system/asound.conf /etc/asound.conf
 
+echo "Configuring NUT for the APC UPS..."
+UPSMON_PASSWORD="$(sudo sed -n 's/^ *password = //p' /etc/nut/upsd.users 2>/dev/null | head -1)"
+UPSMON_PASSWORD="${UPSMON_PASSWORD:-$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')}"
+sudo cp scripts/nut/ups.conf scripts/nut/nut.conf /etc/nut/
+for f in upsd.users upsmon.conf; do
+    sed "s|@UPSMON_PASSWORD@|$UPSMON_PASSWORD|g" "scripts/nut/$f" | sudo tee "/etc/nut/$f" > /dev/null
+done
+sudo chown root:nut /etc/nut/*.conf /etc/nut/upsd.users
+sudo chmod 640 /etc/nut/*.conf /etc/nut/upsd.users
+sudo systemctl enable nut-server nut-monitor
+sudo systemctl restart nut-server nut-monitor || echo "NUT will start once the UPS is connected over USB"
+
 install_service() {
     local name="$1"
     sed -e "s|@USER@|$APP_USER|g" -e "s|@APP_DIR@|$APP_DIR|g" \
@@ -68,8 +81,9 @@ install_service() {
 echo "Installing systemd services..."
 install_service projection-mapper.service
 install_service uxplay.service
+install_service projector-control.service
 sudo systemctl daemon-reload
-sudo systemctl enable projection-mapper uxplay
+sudo systemctl enable projection-mapper uxplay projector-control
 
 echo "Setup complete! Reboot to apply group membership and the HDMI mode."
 echo "To start the service: sudo systemctl start projection-mapper"

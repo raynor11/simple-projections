@@ -1,0 +1,17 @@
+[Unit]
+Description=Projector power and brightness control (RS-232 + UPS)
+After=nut-monitor.service nut-server.service
+Wants=nut-monitor.service
+
+[Service]
+Type=simple
+# root: `upsmon -c fsd` (the power-loss shutdown) needs it.
+User=root
+WorkingDirectory=@APP_DIR@
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=@APP_DIR@/.venv/bin/python projector_control.py --config config/frames.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
