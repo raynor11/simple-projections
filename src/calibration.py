@@ -24,18 +24,27 @@ SELECTED_COLOR = (255, 255, 255)
 SCREEN_COLOR = (0, 180, 255)
 CORNER_COLORS = {'tl': (0, 255, 0), 'tr': (255, 0, 0), 'br': (0, 0, 255), 'bl': (255, 255, 0)}
 
-HELP = [
-    "Tab: next frame   n: new   d: delete   s: save   l: reload   Esc/q: quit",
-    "Arrows: move (Shift = faster)   Ctrl/Alt+Arrows: resize   p: edit portrait layout",
-    "r: preview idle/casting/night rules   e: edit screen corners   a: auto-detect screen",
+HELP_ITEMS = [
+    "Tab: next frame", "Arrows: move (Shift = faster)", "Ctrl/Alt+Arrows: resize",
+    "p: portrait layout", "r: preview idle/casting/night", "e: screen corners", "a: auto-detect screen",
+    "n: new frame", "d: delete", "s: save", "l: reload", "h: hide help", "Esc/q: quit",
 ]
+HELP = ["   ".join(HELP_ITEMS[i:i + 4]) for i in range(0, len(HELP_ITEMS), 4)]   # for the terminal
+
+HUD_BACKGROUND = (0, 0, 0, 190)
+HUD_TEXT = (215, 215, 215)
+HUD_STATUS = (255, 255, 255)
+HANDLE_RADIUS = 7
 
 
 class CalibrationUI:
     """
     Interactive layout editor. Frames are moved/resized in normalized screen
     space; in screen mode the screen's corners are nudged in canvas pixels.
-    Draws on a canvas-sized surface that's scaled to the window.
+    Frame and screen outlines are drawn in canvas coordinates mapped to the
+    window (stretched exactly as playback stretches the canvas), while text
+    and handles are drawn at the window's own resolution so they stay crisp
+    and undistorted whatever the canvas and window shapes.
     """
 
     def __init__(self, canvas_width, canvas_height, config, config_path=None, detect=None):
@@ -51,9 +60,10 @@ class CalibrationUI:
         self.preview = 'idle'
         self.running = True
         self.modified = False
-        self.canvas = pygame.Surface((canvas_width, canvas_height))
-        self.font = None
+        self._fonts = {}
+        self.show_help = True
         self._window = None
+        self._scale = (1.0, 1.0)
 
     # -- state helpers ---------------------------------------------------------
 
@@ -102,21 +112,29 @@ class CalibrationUI:
 
     # -- drawing ---------------------------------------------------------------
 
+    def _font(self, size):
+        size = int(size)
+        if size not in self._fonts:
+            self._fonts[size] = pygame.font.Font(None, size)
+        return self._fonts[size]
+
+    def _to_window(self, point):
+        return (point[0] * self._scale[0], point[1] * self._scale[1])
+
     def render_grid(self, window):
-        if self.font is None:
-            self.font = pygame.font.Font(None, max(18, self.canvas_height // 45))
-        surface = self.canvas
-        surface.fill((20, 20, 20))
-        pygame.draw.line(surface, (40, 40, 40), (0, self.canvas_height // 2),
-                         (self.canvas_width, self.canvas_height // 2), 1)
-        pygame.draw.line(surface, (40, 40, 40), (self.canvas_width // 2, 0),
-                         (self.canvas_width // 2, self.canvas_height), 1)
+        self._window = window
+        win_w, win_h = window.get_size()
+        self._scale = (win_w / self.canvas_width, win_h / self.canvas_height)
+        label_font = self._font(max(14, min(26, win_h // 42)))
+
+        window.fill((20, 20, 20))
+        pygame.draw.line(window, (40, 40, 40), (0, win_h // 2), (win_w, win_h // 2), 1)
+        pygame.draw.line(window, (40, 40, 40), (win_w // 2, 0), (win_w // 2, win_h), 1)
 
         screen = screen_corners(self.config)
         S = screen_homography(screen)
-        self._draw_quad(surface, screen, SCREEN_COLOR, 3 if self.screen_mode else 1)
-        if self.screen_mode:
-            self._draw_corner_handles(surface, screen)
+        self._draw_quad(window, screen, SCREEN_COLOR, 3 if self.screen_mode else 1)
+        handles = screen if self.screen_mode else None
 
         active, now = self.preview_active_ids(), self.preview_time()
         for i, frame in enumerate(self.frames()):
@@ -127,58 +145,98 @@ class CalibrationUI:
             portrait = selected and self.portrait
             corners = frame_canvas_corners(cfg, S, portrait)
             color = SELECTED_COLOR if selected else FRAME_COLOR
-            self._draw_quad(surface, corners, color, 3 if selected else 1, dashed=hidden)
+            self._draw_quad(window, corners, color, 3 if selected else 1, dashed=hidden)
             label = frame.get('label') or frame['id']
             if hidden:
                 label += " (hidden)"
             if portrait and cfg.get('rect_portrait'):
                 label += " [portrait]"
-            text = self.font.render(label, True, color)
-            tl = corners['tl']
-            surface.blit(text, (tl[0] + 6, tl[1] + 4))
+            x, y = self._to_window(corners['tl'])
+            window.blit(label_font.render(label, True, color), (x + 8, y + 6))
             if selected and 'rect' not in frame:
-                self._draw_corner_handles(surface, corners)
+                handles = corners
 
-        self._draw_hud(surface)
-        self._window = window
-        pygame.transform.smoothscale(surface, window.get_size(), window)
+        self._draw_hud(window)
+        if handles:
+            self._draw_corner_handles(window, handles)   # on top, so the help never hides them
 
     def _draw_quad(self, surface, corners, color, width, dashed=False):
-        pts = [corners[k] for k in CORNER_ORDER]
+        pts = [np.array(self._to_window(corners[k]), float) for k in CORNER_ORDER]
         for a, b in zip(pts, pts[1:] + pts[:1]):
             if not dashed:
                 pygame.draw.line(surface, color, a, b, width)
                 continue
-            a, b = np.array(a, float), np.array(b, float)
             length = np.linalg.norm(b - a)
-            for t in np.arange(0, length, 24):
+            for t in np.arange(0, length, 16):
                 p1 = a + (b - a) * (t / length)
-                p2 = a + (b - a) * (min(length, t + 12) / length)
+                p2 = a + (b - a) * (min(length, t + 8) / length)
                 pygame.draw.line(surface, color, p1, p2, width)
 
     def _draw_corner_handles(self, surface, corners):
+        # Corners on (or past) the window edge -- e.g. an undetected screen,
+        # which is the whole canvas -- are drawn just inside it so they're visible.
+        win_w, win_h = surface.get_size()
+        inset = HANDLE_RADIUS + 4
         for key, color in CORNER_COLORS.items():
-            pos = tuple(int(v) for v in corners[key])
-            pygame.draw.circle(surface, (255, 255, 255) if key == self.current_corner else color, pos, 8)
+            x, y = self._to_window(corners[key])
+            pos = (int(min(max(x, inset), win_w - inset)), int(min(max(y, inset), win_h - inset)))
+            if key == self.current_corner:
+                pygame.draw.circle(surface, (255, 255, 255), pos, HANDLE_RADIUS + 3)
+            pygame.draw.circle(surface, color, pos, HANDLE_RADIUS)
 
-    def _draw_hud(self, surface):
+    def _status(self):
         frame = self.get_current_frame()
         if self.screen_mode:
-            status = f"SCREEN corners: {self.current_corner.upper()}   (e: back to frames)"
+            status = f"Screen corner {self.current_corner.upper()}  (1-4 pick, e: back to frames)"
         elif frame:
             _, target = self.editable(frame) if 'rect' in frame else (None, 'corners')
-            status = (f"Frame: {frame.get('label') or frame['id']}   editing: {target}"
-                      f"{' portrait' if self.portrait else ''}")
+            status = (f"Frame: {frame.get('label') or frame['id']}  ·  editing {target}"
+                      f"{' (portrait)' if self.portrait else ''}")
         else:
             status = "No frames (n: add one)"
-        lines = [f"{status}   preview: {self.preview}{'   *unsaved*' if self.modified else ''}"] + HELP
-        y = self.canvas_height - (len(lines) + 1) * self.font.get_linesize()
-        backing = pygame.Surface((self.canvas_width, self.canvas_height - y + 8), pygame.SRCALPHA)
-        backing.fill((0, 0, 0, 170))
-        surface.blit(backing, (0, y - 8))
-        for line in lines:
-            surface.blit(self.font.render(line, True, (200, 200, 200)), (12, y))
-            y += self.font.get_linesize()
+        status += f"  ·  preview: {self.preview}"
+        if self.modified:
+            status += "  ·  unsaved changes"
+        return status
+
+    @staticmethod
+    def _wrap(items, font, width, sep="     "):
+        """Pack help items into lines that fit width, never splitting an item."""
+        lines, line = [], ""
+        for item in items:
+            candidate = item if not line else line + sep + item
+            if line and font.size(candidate)[0] > width:
+                lines.append(line)
+                line = item
+            else:
+                line = candidate
+        if line:
+            lines.append(line)
+        return lines
+
+    def _draw_hud(self, surface):
+        win_w, win_h = surface.get_size()
+        size = max(14, min(26, win_h // 42))
+        status_font, help_font = self._font(size + 4), self._font(size)
+        margin = max(10, size // 2)
+        if self.show_help:
+            help_lines = self._wrap(HELP_ITEMS, help_font, win_w - 2 * margin)
+        else:
+            help_lines = ["h: show help"]
+
+        line_h = help_font.get_linesize()
+        height = status_font.get_linesize() + line_h * len(help_lines) + 2 * margin
+        backing = pygame.Surface((win_w, height), pygame.SRCALPHA)
+        backing.fill(HUD_BACKGROUND)
+        top = win_h - height
+        surface.blit(backing, (0, top))
+
+        y = top + margin
+        surface.blit(status_font.render(self._status(), True, HUD_STATUS), (margin, y))
+        y += status_font.get_linesize()
+        for line in help_lines:
+            surface.blit(help_font.render(line, True, HUD_TEXT), (margin, y))
+            y += line_h
 
     # -- input -----------------------------------------------------------------
 
@@ -205,6 +263,8 @@ class CalibrationUI:
             self.current_corner = 'tl'
         elif key == pygame.K_p:
             self.portrait = not self.portrait
+        elif key == pygame.K_h:
+            self.show_help = not self.show_help
         elif key == pygame.K_r:
             self.preview = PREVIEW_STATES[(PREVIEW_STATES.index(self.preview) + 1) % len(PREVIEW_STATES)]
         elif key == pygame.K_a:

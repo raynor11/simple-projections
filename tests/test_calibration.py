@@ -79,3 +79,20 @@ def test_add_and_delete_frame(ui):
     assert len(ui.config['frames']) == 3
     ui.handle_key(pygame.K_d)
     assert len(ui.config['frames']) == 2
+
+
+@pytest.mark.parametrize('window', [(1470, 956), (960, 540), (600, 1000)])
+def test_renders_at_any_window_shape(ui, window):
+    surface = pygame.Surface(window)
+    ui.render_grid(surface)
+    ui.handle_key(pygame.K_h)
+    ui.handle_key(pygame.K_e)
+    ui.render_grid(surface)
+    assert not ui.show_help
+
+
+def test_help_wraps_to_width():
+    pygame.font.init()
+    font = pygame.font.Font(None, 20)
+    lines = CalibrationUI._wrap(["aaaa", "bbbb", "cccc"], font, font.size("aaaa     bbbb")[0])
+    assert lines == ["aaaa     bbbb", "cccc"]

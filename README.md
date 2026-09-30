@@ -104,6 +104,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | `a` | Auto-detect the screen with the camera |
 | `n` / `d` | Add a text frame / delete the selected frame |
 | `s` / `l` | Save / reload the config |
+| `h` | Hide / show the help panel |
 | `Esc` / `q` | Quit |
 
 Cast frames that are hidden in the current preview state are drawn dashed.
