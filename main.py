@@ -100,7 +100,7 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
         desk_w, desk_h = pygame.display.get_desktop_sizes()[display_index]
         scale = min(1.0, 0.9 * desk_w / canvas_width, 0.9 * desk_h / canvas_height)
         window_size = (int(canvas_width * scale), int(canvas_height * scale))
-        screen = pygame.display.set_mode(window_size, display=display_index)
+        screen = pygame.display.set_mode(window_size, pygame.RESIZABLE, display=display_index)
     pygame.display.set_caption("Projection Mapper - Calibration")
     clock = pygame.time.Clock()
 
@@ -113,15 +113,15 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
     ui = CalibrationUI(canvas_width, canvas_height, config, config_path=config_path, detect=detect)
 
     print("Calibration Mode")
-    print("Controls:")
     for line in HELP:
         print(f"  {line}")
 
     while ui.running:
         ui.handle_events()
-        ui.render_grid(screen)
+        # get_surface(): the window may have been resized.
+        ui.render_grid(pygame.display.get_surface() or screen)
         pygame.display.flip()
-        clock.tick(30)
+        clock.tick(60)
 
     if ui.modified:
         print("Quit with unsaved changes (press s to save before quitting next time)")

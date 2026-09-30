@@ -96,3 +96,102 @@ def test_help_wraps_to_width():
     font = pygame.font.Font(None, 20)
     lines = CalibrationUI._wrap(["aaaa", "bbbb", "cccc"], font, font.size("aaaa     bbbb")[0])
     assert lines == ["aaaa     bbbb", "cccc"]
+
+
+# -- mouse ---------------------------------------------------------------------
+# The fixture's canvas is 1920x1080 with no detected screen, so on a
+# 1920x1080 window normalized screen (x, y) is at pixel (1920x, 1080y).
+
+def ready(ui):
+    ui.render_grid(pygame.Surface((1920, 1080)))
+    return ui
+
+
+def mouse(ui, kind, pos, button=1):
+    ui.handle_event(pygame.event.Event(kind, pos=pos, button=button, rel=(0, 0), buttons=(1, 0, 0)))
+
+
+def drag(ui, start, end):
+    mouse(ui, pygame.MOUSEBUTTONDOWN, start)
+    mouse(ui, pygame.MOUSEMOTION, end)
+    mouse(ui, pygame.MOUSEBUTTONUP, end)
+
+
+def px(x, y):
+    return (round(1920 * x), round(1080 * y))
+
+
+def test_click_selects_frame(ui):
+    ready(ui)
+    mouse(ui, pygame.MOUSEBUTTONDOWN, px(0.7, 0.7))
+    mouse(ui, pygame.MOUSEBUTTONUP, px(0.7, 0.7))
+    assert ui.current_frame_idx == 0
+    assert not ui.modified                       # a click without moving changes nothing
+
+
+def test_drag_moves_frame_and_undo_restores(ui):
+    ready(ui)
+    drag(ui, px(0.25, 0.25), px(0.30, 0.25))
+    assert weather(ui)['rect'] == pytest.approx([0.15, 0.1, 0.3, 0.3], abs=1e-3)
+    ui.handle_key(pygame.K_z, pygame.KMOD_CTRL)
+    assert weather(ui)['rect'] == [0.1, 0.1, 0.3, 0.3]
+    ui.handle_key(pygame.K_y, pygame.KMOD_CTRL)
+    assert weather(ui)['rect'] == pytest.approx([0.15, 0.1, 0.3, 0.3], abs=1e-3)
+
+
+def test_drag_snaps_to_screen_centre(ui):
+    ready(ui)
+    drag(ui, px(0.25, 0.25), px(0.25 + 0.397, 0.25))   # left edge would land at 0.497
+    assert weather(ui)['rect'][0] == pytest.approx(0.5)
+
+
+def test_drag_handle_resizes(ui):
+    ready(ui)
+    ui.render_grid(pygame.Surface((1920, 1080)))
+    drag(ui, px(0.4, 0.4), px(0.45, 0.5))                # the bottom-right handle
+    assert weather(ui)['rect'] == pytest.approx([0.1, 0.1, 0.35, 0.4], abs=1e-3)
+
+
+def test_wheel_scales_selected_frame(ui):
+    ready(ui)
+    ui.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=2))
+    x, y, w, h = weather(ui)['rect']
+    assert w > 0.3 and x + w / 2 == pytest.approx(0.25, abs=1e-3)
+
+
+def test_drag_screen_corner(ui):
+    ready(ui)
+    ui.handle_key(pygame.K_e)
+    handles, numbered = ui._handles()
+    assert numbered
+    drag(ui, handles['tl'], (100, 200))
+    assert ui.config['screen']['corners']['tl'] == [100, 200]
+
+
+def test_toolbar_buttons(ui):
+    ready(ui)
+    add = next(b for b in ui.buttons if b.id == 'add')
+    mouse(ui, pygame.MOUSEBUTTONDOWN, add.rect.center)
+    assert len(ui.config['frames']) == 3
+    ui.render_grid(pygame.Surface((1920, 1080)))
+    undo = next(b for b in ui.buttons if b.id == 'undo')
+    assert undo.enabled
+    mouse(ui, pygame.MOUSEBUTTONDOWN, undo.rect.center)
+    assert len(ui.config['frames']) == 2
+
+
+def test_quit_asks_again_when_unsaved(ui):
+    ui.handle_key(pygame.K_RIGHT)
+    ui.handle_key(pygame.K_q)
+    assert ui.running                            # warned instead of quitting
+    ui.handle_key(pygame.K_q)
+    assert not ui.running
+
+
+def test_text_size_controls(ui):
+    ui.handle_key(pygame.K_EQUALS)
+    ui.handle_key(pygame.K_EQUALS)
+    assert ui.ui_scale == 1.25
+    for _ in range(10):
+        ui.handle_key(pygame.K_MINUS)
+    assert ui.ui_scale == 0.75

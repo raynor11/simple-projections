@@ -89,25 +89,41 @@ On a Mac, a camera `device` can be an index like `0`. Chromecast, AirPlay, audio
 
 A webcam aimed at the screen will show the projection itself in its camera frame (an "infinite mirror" effect). Re-aim it after detection, or place that frame deliberately.
 
-## Calibration controls
+## Calibration
 
-`python main.py --calibrate` (add `--windowed` on a Mac):
+`python main.py --calibrate` (add `--windowed` on a Mac; the window can be resized). Everything works with the mouse, the keyboard, or both.
+
+**Mouse**
+- Click a frame to select it, and drag it to move it.
+- Drag the square handles on its corners and edges to resize it.
+- Scroll to make it bigger or smaller.
+- While dragging, frames snap to the screen's edges and center and to other frames' edges; a dashed guide shows what they snapped to. Hold **Alt** to drag without snapping.
+- The toolbar across the top has a button for every action, and each button shows its shortcut key.
+
+**Keyboard**
 
 | Key | Action |
 |---|---|
 | `Tab` / `Shift+Tab` | Select the next / previous frame |
 | Arrows | Move the frame (`Shift` for bigger steps) |
 | `Ctrl`/`Alt` + Arrows | Resize the frame |
+| `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / redo |
 | `p` | Edit the frame's portrait layout (`rect_portrait`) |
 | `r` | Preview rule states: idle / casting / night. Edits go to whichever rule is active in that state. |
-| `e` | Screen mode: `1`–`4` pick a corner, arrows nudge it |
+| `e` | Screen mode: drag the numbered corner handles, or press `1`–`4` and use the arrows |
 | `a` | Auto-detect the screen with the camera |
 | `n` / `d` | Add a text frame / delete the selected frame |
 | `s` / `l` | Save / reload the config |
+| `+` / `-` | Bigger / smaller interface text |
 | `h` | Hide / show the help panel |
-| `Esc` / `q` | Quit |
+| `Esc` / `q` | Quit. With unsaved changes you're asked to press it again (or `s` to save). |
 
-Cast frames that are hidden in the current preview state are drawn dashed.
+**Accessibility**
+- Nothing is shown by color alone. The selected frame is filled and has a thicker outline; hidden frames (such as a cast frame that isn't casting in the previewed state) are dashed and labelled "hidden".
+- Corner handles are numbered 1–4 to match their keys, and the active one is larger.
+- Buttons that are switched on are light with dark text.
+- The colors come from the Okabe-Ito palette, which stays distinguishable with the common kinds of color blindness.
+- Messages such as "Saved" or detection errors appear on screen, not just in the terminal.
 
 ## Configuration
 
