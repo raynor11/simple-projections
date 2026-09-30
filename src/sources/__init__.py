@@ -23,4 +23,7 @@ def create_source(src_cfg, context=None):
     if kind == 'file':
         from .file import create_file_source
         return create_file_source(src_cfg)
+    if kind == 'camera':
+        from .v4l2 import V4L2Source
+        return V4L2Source(src_cfg)
     raise ValueError(f"Unknown source type: {kind!r}")
