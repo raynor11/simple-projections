@@ -1,19 +1,63 @@
 {
-  "canvas": {
-    "width": 1080,
-    "height": 1920
-  },
+  "canvas": {"width": 1920, "height": 1080},
+  "location": {"lat": 41.88, "lon": -87.63, "timezone": "America/Chicago"},
+  "detection": {"camera": "/dev/v4l/by-id/usb-YOUR_WEBCAM-video-index0"},
   "frames": [
     {
-      "id": "frame_1",
-      "label": "Sample frame",
-      "media": "media/sample.mp4",
-      "corners": {
-        "tl": [120, 200],
-        "tr": [420, 210],
-        "br": [415, 610],
-        "bl": [115, 600]
+      "id": "weather",
+      "label": "Weather",
+      "rect": [0.02, 0.04, 0.3, 0.45],
+      "source": {"type": "weather", "units": "imperial"},
+      "rules": [
+        {"when": {"active_any": ["cc", "air"]}, "set": {"rect": [0.02, 0.04, 0.15, 0.25]}},
+        {"when": {"between": ["23:00", "06:00"]}, "set": {"hidden": true}}
+      ]
+    },
+    {
+      "id": "msg",
+      "label": "Message",
+      "rect": [0.02, 0.55, 0.3, 0.4],
+      "source": {"type": "text", "text": "Welcome!", "color": "#ffffff", "background": "#00000000", "align": "center"},
+      "rules": [
+        {"when": {"active_any": ["cc", "air"]}, "set": {"hidden": true}}
+      ]
+    },
+    {
+      "id": "cam",
+      "label": "Camera",
+      "rect": [0.36, 0.04, 0.3, 0.3],
+      "source": {"type": "camera", "device": "/dev/v4l/by-id/usb-YOUR_WEBCAM-video-index0", "width": 1280, "height": 720}
+    },
+    {
+      "id": "cc",
+      "label": "Chromecast",
+      "rect": [0.34, 0.38, 0.64, 0.58],
+      "rect_portrait": [0.7, 0.04, 0.28, 0.92],
+      "source": {
+        "type": "chromecast",
+        "device": "/dev/v4l/by-id/usb-YOUR_CAPTURE_CARD-video-index0",
+        "cast_name": "Living Room TV",
+        "width": 1280,
+        "height": 720,
+        "audio_device": "hw:CARD=MS2109",
+        "audio_delay_ms": 120
       }
+    },
+    {
+      "id": "air",
+      "label": "AirPlay",
+      "rect": [0.34, 0.38, 0.64, 0.58],
+      "rect_portrait": [0.7, 0.04, 0.28, 0.92],
+      "source": {"type": "airplay", "device": "/dev/video10", "port": 7000}
     }
-  ]
+  ],
+  "projector": {
+    "serial": "/dev/serial/by-id/usb-FTDI_YOUR_ADAPTER-if00-port0",
+    "baud": 19200,
+    "ups": "apc@localhost",
+    "light_source_opcode": [17, 16],
+    "brightness": {"day": "normal", "dusk": "eco", "night": "supereco", "twilight_offset_min": 30},
+    "power_loss_debounce_s": 10,
+    "projector_off_timeout_s": 90
+  }
 }

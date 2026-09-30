@@ -1,158 +1,269 @@
 # Projection Mapper
 
-A lightweight, cross-platform projection mapping tool for Raspberry Pi and macOS. Warps multiple video/image sources onto a physical display using 4-point perspective correction.
+Projects a layout of live frames onto a projector screen from a Raspberry Pi 4. The frames can show weather, text, a camera, a Chromecast or AirPlay. The Pi also runs the projector: power follows the wall switch through the UPS, and brightness follows the time of day.
+
+Built for this setup:
+
+- Raspberry Pi 4B running Raspberry Pi OS Lite 64-bit (Bookworm)
+- ViewSonic LS740-4K laser projector, about 13 ft back, projecting onto a 100" 16:9 screen (white, black border)
+- One USB webcam: finds the screen, and can also be shown as a frame
+- USB HDMI capture card with a Chromecast plugged into it
+- APC BE600M1 UPS (USB to the Pi) on a switched wall outlet
+- USB-to-RS232 adapter to the projector
 
 ## Features
 
-- **Multi-frame support**: Map multiple independent video/image sources to different screen regions
-- **Interactive calibration**: Real-time keyboard-driven UI to adjust frame corners
-- **Cross-platform**: Runs identically on macOS (for development) and Raspberry Pi (for deployment)
-- **Headless deployment**: Auto-starts on boot via systemd, runs unattended
-- **Portrait orientation support**: Optimized for projectors in portrait mode
+- **Screen detection:** the webcam finds the screen, and frames are laid out as rectangles on it. The keystone correction is exact (per-pixel perspective warp). If the projector moves, re-run detection and the layout stays put.
+- **Frame types:** video/image files, text, weather, a live camera, Chromecast and AirPlay.
+- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector.
+- **Frame rules:** frames can change while something else is happening, for example "shrink the weather while casting" or "hide the message at night".
+- **Live config:** edit `config/frames.json` over SSH and the running display picks up the change.
+- **Power:** turning the wall switch off turns the projector off, then shuts the Pi down cleanly. Turning it on brings everything back up.
+- **Brightness:** the projector's light source mode follows sunrise and sunset.
 
-## Requirements
+## How it runs
 
-- Python 3.11+
-- macOS or Raspberry Pi OS (64-bit)
-- For video playback: ffmpeg/libmpv
-- For OpenGL: mesa drivers
+Three systemd services:
+
+| Service | What it does |
+|---|---|
+| `projection-mapper` | Draws the frames (`main.py --play`); detects casting; plays Chromecast audio |
+| `uxplay` | AirPlay receiver; writes video to `/dev/video10` and audio to HDMI |
+| `projector-control` | RS-232 projector control, UPS monitoring, power-loss shutdown, brightness schedule |
 
 ## Installation
 
-### macOS (Development)
+### Raspberry Pi
+
+1. Flash **Raspberry Pi OS Lite (64-bit)** and enable SSH.
+2. Clone the repo and run the setup script as your normal user:
+   ```bash
+   git clone <repo> projection-mapper
+   cd projection-mapper
+   ./scripts/setup_pi.sh
+   cp config/frames.example.json config/frames.json
+   sudo reboot
+   ```
+
+The setup script:
+- installs the packages;
+- sets HDMI to 1080p (the projector upscales to 4K; the Pi 4 can't render live frames at 4K);
+- configures the AirPlay loopback device, HDMI audio and NUT for the UPS;
+- installs and enables the three services.
+
+### macOS (development)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python main.py --play --windowed --config config/frames.dev.json
 ```
 
-### Raspberry Pi (Production)
+On a Mac, a camera `device` can be an index like `0`. Chromecast, AirPlay, audio and the UPS only work on the Pi.
 
-```bash
-cd /home/pi
-git clone <repo> projection-mapper
-cd projection-mapper
-chmod +x scripts/setup_pi.sh
-./scripts/setup_pi.sh
-```
+## First-time setup on site
 
-## Usage
+1. **Find your devices** and put their stable paths in `config/frames.json`:
+   ```bash
+   ls /dev/v4l/by-id/          # webcam and capture card (use the -video-index0 entries)
+   ls /dev/serial/by-id/       # USB-RS232 adapter
+   arecord -l                  # capture card audio device, e.g. hw:CARD=MS2109
+   v4l2-ctl -d <device> --list-formats-ext   # supported capture modes
+   ```
+   Also set:
+   - `location` (for weather and sunrise/sunset);
+   - the Chromecast's name as it appears in the Google Home app (`cast_name`).
+2. **Check the projector link** (see [Projector control](#projector-control)):
+   ```bash
+   sudo systemctl stop projector-control
+   .venv/bin/python projector_control.py --test status
+   ```
+3. **Detect the screen.** Point the webcam at the screen, then:
+   ```bash
+   sudo systemctl stop projection-mapper
+   .venv/bin/python main.py --detect-screen
+   ```
+   It projects white, black and a chessboard, then shows a green outline of the screen it found. If the outline sits on the inner edge of the black border, press **Enter** to save; press **Esc** to discard. The camera photos go to `captures/` if you need to troubleshoot.
+4. **Lay out the frames** with `python main.py --calibrate` (controls below). Press `s` to save.
+5. Start everything again: `sudo systemctl start projection-mapper projector-control`.
 
-### Calibration Mode
+A webcam aimed at the screen will show the projection itself in its camera frame (an "infinite mirror" effect). Re-aim it after detection, or place that frame deliberately.
 
-Interactively adjust frame corners:
+## Calibration controls
 
-```bash
-python main.py --calibrate --windowed
-```
+`python main.py --calibrate` (add `--windowed` on a Mac):
 
-**Controls:**
-- `Tab` / `Shift+Tab`: cycle frames
-- `1`–`4`: select corner (TL, TR, BR, BL)
-- Arrow keys: nudge corner by 1px (Shift+Arrow for 10px)
-- `n`: add new frame
-- `d`: delete current frame
-- `s`: save config
-- `l`: reload config from disk
-- `Esc` / `q`: quit
+| Key | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | Select the next / previous frame |
+| Arrows | Move the frame (`Shift` for bigger steps) |
+| `Ctrl`/`Alt` + Arrows | Resize the frame |
+| `p` | Edit the frame's portrait layout (`rect_portrait`) |
+| `r` | Preview rule states: idle / casting / night. Edits go to whichever rule is active in that state. |
+| `e` | Screen mode: `1`–`4` pick a corner, arrows nudge it |
+| `a` | Auto-detect the screen with the camera |
+| `n` / `d` | Add a text frame / delete the selected frame |
+| `s` / `l` | Save / reload the config |
+| `Esc` / `q` | Quit |
 
-### Playback Mode
-
-```bash
-python main.py --play
-```
-
-On Raspberry Pi, this runs fullscreen. On macOS, use `--windowed` for dev testing.
+Cast frames that are hidden in the current preview state are drawn dashed.
 
 ## Configuration
 
-Frame configuration is stored in `config/frames.json`:
+`config/frames.json` (start from [`config/frames.example.json`](config/frames.example.json)). While running, the display and projector control reload it automatically when it changes. If an edit is invalid, it's reported in the logs and the running config stays in effect.
+
+| Key | Meaning |
+|---|---|
+| `canvas` | Output size in pixels (1920×1080). Changing it needs a restart. |
+| `location` | `lat`, `lon` and optional `timezone`, for weather and sunrise/sunset |
+| `screen.corners` | Screen corners in canvas pixels, written by `--detect-screen`. Without it, the whole canvas counts as the screen. |
+| `detection.camera` | Camera used by `--detect-screen`. Defaults to the first `camera` frame's device. |
+| `frames` | Frames, drawn in list order (later frames are drawn on top) |
+| `projector` | RS-232 projector control (see below) |
+
+### Frames
 
 ```json
-{
-  "canvas": {
-    "width": 1080,
-    "height": 1920
-  },
-  "frames": [
-    {
-      "id": "frame_1",
-      "label": "Upper left",
-      "media": "media/video.mp4",
-      "corners": {
-        "tl": [120, 200],
-        "tr": [420, 210],
-        "br": [415, 610],
-        "bl": [115, 600]
-      }
-    }
-  ]
-}
+{"id": "weather", "label": "Weather", "rect": [0.02, 0.04, 0.3, 0.45], "source": {"type": "weather"}}
 ```
 
-- `canvas`: Output resolution (width/height)
-- `frames[].media`: Path to video/image file
-- `corners`: 4-point quad in canvas pixel space
+- `rect` is `[x, y, width, height]` as fractions of the screen, from its top-left corner.
+- `rect_portrait` (optional) is used instead when a cast is showing portrait content.
+- Older configs with pixel `corners` and a `media` path still work.
 
-### Supported Media
+| Source `type` | Fields |
+|---|---|
+| `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image |
+| `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf). The text auto-sizes to fill the frame. |
+| `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Uses Open-Meteo; no API key needed. |
+| `camera` | `device`, `width`, `height`, `fps` |
+| `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `idle_app_ids` |
+| `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds` |
 
-- Video: MP4, MOV, AVI, MKV, WebM
-- Images: PNG, JPG, JPEG, BMP, WebP
+### Rules
 
-## Deployment
+```json
+"rules": [
+  {"when": {"active_any": ["cc", "air"]}, "set": {"rect": [0.02, 0.04, 0.15, 0.25]}},
+  {"when": {"between": ["23:00", "06:00"]}, "set": {"hidden": true}}
+]
+```
 
-### On Raspberry Pi
+- Rules are checked top to bottom, and the first one that matches wins. If none match, the frame uses its normal settings.
+- All the conditions inside one `when` must be true.
+- A frame counts as "active" while its cast is showing.
 
-The service auto-starts on boot:
+| Condition | True when |
+|---|---|
+| `active_any: [ids]` | any of these frames is active |
+| `active_all: [ids]` | all of these frames are active |
+| `inactive_all: [ids]` | none of these frames are active |
+| `between: ["HH:MM", "HH:MM"]` | the local time is in this window (it can wrap past midnight) |
+
+`set` can change these fields:
+- `hidden`;
+- `rect` and `rect_portrait`;
+- `corners`;
+- `source`: a partial source merges into the frame's source (e.g. `{"text": "Now casting"}`); a source with a different `type` replaces it.
+
+## Projector control
+
+The `projector` section of the config:
+
+| Key | Meaning |
+|---|---|
+| `serial`, `baud` | The RS-232 adapter's port and speed (ViewSonic's default is 19200) |
+| `light_source_opcode` | The two command bytes for light source mode. Defaults to `[17, 16]` (0x11 0x10), as on ViewSonic's 4K PX7xx series. ViewSonic's generic document uses `[17, 12]` instead. |
+| `light_source_modes` | Mode name → value. Defaults: `normal` 0, `eco` 1, `dynamic_eco` 2, `supereco` 3. |
+| `brightness` | The light source mode for `day`, `dusk` and `night`, plus `twilight_offset_min` (default 30) |
+| `power_loss_debounce_s` | How long power must stay off before shutting down (default 10) |
+| `projector_off_timeout_s` | Shut down anyway if the projector hasn't reported off by then (default 90) |
+| `ups` | NUT's name for the UPS (default `apc@localhost`) |
+| `power_on_at_boot` | Turn the projector on at boot (default true) |
+
+"Dusk" covers civil twilight. It also includes the last `twilight_offset_min` of daylight before sunset and the first after sunrise.
+
+**Check the commands against the LS740-4K before relying on them.** The light-source opcode differs between ViewSonic models; confirm it against the LS740-4K's RS-232 table. Test each command with the service stopped:
 
 ```bash
-sudo systemctl start projection-mapper      # Start now
-sudo systemctl stop projection-mapper       # Stop
-sudo systemctl status projection-mapper     # Status
-journalctl -u projection-mapper -f          # Tail logs
+sudo systemctl stop projector-control
+.venv/bin/python projector_control.py --test status
+.venv/bin/python projector_control.py --test light-source          # read the current mode
+.venv/bin/python projector_control.py --test light-source eco      # set a mode
+.venv/bin/python projector_control.py --test off
+.venv/bin/python projector_control.py --test on
+.venv/bin/python projector_control.py --test raw "07 14 00 05 00 34 00 00 11 00 5E"
+.venv/bin/python projector_control.py --test ups
 ```
 
-To re-calibrate remotely, SSH into the Pi and run:
+### Power loss sequence
+
+1. The wall switch is turned off, and the UPS goes on battery.
+2. After 10 s (so flicking the switch off and on does nothing), the projector is sent power-off.
+3. When the projector reports it's off (or after the timeout), NUT shuts the Pi down.
+4. About 20 s after the Pi halts, the UPS cuts its output.
+5. When the switch is turned back on, the UPS restores its output 30 s later. The Pi boots, turns the projector on and sets its brightness.
+
+If power returns during steps 1–2, the projector is turned back on and nothing shuts down. NUT's standard low-battery shutdown remains as a safety net.
+
+## Hardware notes
+
+- **UPS load:** the BE600M1 is rated for 330 W. Check the projector's rated power draw: if the projector plus the Pi exceed about 330 W, the UPS will overload the moment it switches to battery. Plug both into the **battery-backed** outlets, not the surge-only ones. The Pi's own power supply must be on the UPS too; the USB cable is only for data.
+- **Projector settings:**
+  - Enable RS-232 control in standby (the projector's standby/power settings), or the power-on command at boot is ignored.
+  - Leave "Direct Power On" off, so the Pi decides when the projector turns on.
+  - Set the projector's baud rate to match `baud`.
+- **RS-232:** the Pi has no serial port, so use a USB-to-RS232 adapter (FTDI-based). Use a straight-through or null-modem cable according to the projector's port pinout.
+- **Capture card:**
+  - 720p MJPEG is recommended on a Pi 4.
+  - Put the capture card and the webcam on separate USB 3 ports.
+  - **HDCP:** Netflix and other protected Chromecast content will show black through a capture card unless an HDCP-stripping HDMI splitter sits between the Chromecast and the card.
+- **Network:** Chromecast detection and AirPlay need the Pi on the same network and subnet as the phones, with mDNS (multicast) allowed.
+- **Audio:** HDMI audio isn't shared (no mixing). While both the Chromecast and AirPlay are playing, only one of them is heard; the other retries until the device is free.
+
+### Verify on the Pi
+
+These parts can't be tested off the hardware:
+- [ ] The GL context comes up under kmsdrm. The service sets `MESA_GL_VERSION_OVERRIDE=3.3`; the renderer also falls back to GL 3.1.
+- [ ] UxPlay accepts the multi-element `-vs` pipeline in `scripts/uxplay.service`, and frames appear on `/dev/video10`. If not, change `-vs` to just `v4l2sink device=/dev/video10`: portrait phones will then change the stream size, which v4l2loopback may not handle.
+- [ ] The projector commands work with `projector_control.py --test`, including the light-source opcode.
+- [ ] The UPS power cycle works:
+  - `upscmd -l apc@localhost` lists `shutdown.return`;
+  - the full power-loss sequence runs;
+  - turning the switch back on *during* the Pi's shutdown still brings it back.
+- [ ] With the camera, weather, text and one active cast, the logged FPS stays at 25 or more (`journalctl -u projection-mapper -f`).
+
+## Operating
 
 ```bash
-export DISPLAY=:0
-python main.py --calibrate
+sudo systemctl status projection-mapper uxplay projector-control
+journalctl -u projection-mapper -f       # display logs (FPS every 10 s)
+journalctl -u projector-control -f       # power/brightness logs
+sudo systemctl restart projection-mapper
 ```
-
-Or use VNC to access the desktop and run from terminal.
 
 ## Development
 
-Run tests:
-
 ```bash
-pip install pytest
+pip install -r requirements.txt
 pytest tests/
 ```
 
-## Architecture
-
-- `main.py`: Entry point, mode selector
-- `renderer.py`: OpenGL quad rendering and compositing
-- `calibration.py`: Interactive calibration UI
-- `homography.py`: Perspective math helpers
-- `media_loader.py`: Video/image decoding (OpenCV)
-- `config_io.py`: Config file I/O and validation
-- `platform_io.py`: Platform-specific utilities (Mac/Pi detection, GPU info)
-
-## Performance Notes
-
-- Targets 1080p30 on Raspberry Pi VideoCore GPU
-- Keeps shaders simple; avoids large texture uploads per frame
-- Video decoding handled by OpenCV (ffmpeg backend)
-- Tested on Raspberry Pi 4/5
-
-## Known Limitations
-
-- Audio is not currently supported
-- No remote control interface (filesystem-based config updates only)
-- Single projector output only (no multi-output support)
+| Path | Contents |
+|---|---|
+| `main.py` | Entry point: `--play`, `--calibrate`, `--detect-screen` |
+| `projector_control.py` | The projector/UPS control service |
+| `src/renderer.py` | OpenGL drawing with a per-pixel perspective warp; textures persist between frames |
+| `src/playback.py` | Maps frames onto the screen; fades and slides; applies rules and hot reload |
+| `src/rules.py` | Frame rules |
+| `src/sources/` | `file`, `text`, `weather`, `v4l2` (camera), `letterbox`, `cast`, `chromecast`, `airplay`, `audio` |
+| `src/screen_detect.py` | Camera-based screen detection |
+| `src/calibration.py` | The calibration UI |
+| `src/homography.py` | Perspective math |
+| `src/config_io.py` | Config loading, validation, migration and file watching |
+| `src/projector/` | ViewSonic RS-232 control, UPS power sequencing, brightness schedule |
+| `scripts/` | Pi setup script, systemd units, NUT/ALSA/v4l2loopback config |
 
 ## License
 

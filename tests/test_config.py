@@ -87,3 +87,8 @@ def test_canvas_size_must_be_positive_int():
     config["canvas"]["width"] = "x"
     with pytest.raises(ValueError, match="positive integer"):
         validate_config(config)
+
+
+def test_example_config_is_valid():
+    example = Path(__file__).parent.parent / "config" / "frames.example.json"
+    validate_config(migrate_config(load_config(example)))
