@@ -97,6 +97,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 - Click a frame to select it, and drag it to move it.
 - Drag the square handles on its corners and edges to resize it.
 - Scroll to make it bigger or smaller.
+- For a shape that isn't a rectangle (a trapezoid, a rhombus, or any four-cornered shape), click **Warp corners** (or press `W`). Then drag the numbered corners one at a time. The content is warped to fit exactly. Click it again to go back to a rectangle (the shape's bounding box).
 - While dragging, frames snap to the screen's edges and center and to other frames' edges; a dashed guide shows what they snapped to. Hold **Alt** to drag without snapping.
 - The toolbar across the top has a button for every action, and each button shows its shortcut key.
 
@@ -108,7 +109,9 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | Arrows | Move the frame (`Shift` for bigger steps) |
 | `Ctrl`/`Alt` + Arrows | Resize the frame |
 | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / redo |
-| `p` | Edit the frame's portrait layout (`rect_portrait`) |
+| `w` | Warp corners: switch the frame between a rectangle and four free corners |
+| `1`–`4`, then arrows | On a warped frame, move one corner; `Ctrl`/`Alt` + arrows move the whole frame |
+| `p` | Edit the frame's portrait layout (`rect_portrait`, rectangles only) |
 | `r` | Preview rule states: idle / casting / night. Edits go to whichever rule is active in that state. |
 | `e` | Screen mode: drag the numbered corner handles, or press `1`–`4` and use the arrows |
 | `a` | Auto-detect the screen with the camera |
@@ -146,6 +149,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 
 - `rect` is `[x, y, width, height]` as fractions of the screen, from its top-left corner.
 - `rect_portrait` (optional) is used instead when a cast is showing portrait content.
+- A frame can be warped into any four-cornered shape with `"quad": {"tl": [x, y], "tr": [x, y], "br": [x, y], "bl": [x, y]}` instead of `rect`. The corners are fractions of the screen, just like `rect`, so a warped frame still follows the screen when you re-run detection. Each frame has exactly one of `rect`, `quad` or the older pixel `corners`.
 - Older configs with pixel `corners` and a `media` path still work.
 
 | Source `type` | Fields |
@@ -179,7 +183,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 
 `set` can change these fields:
 - `hidden`;
-- `rect` and `rect_portrait`;
+- `rect`, `rect_portrait` and `quad` (a rule that sets a shape replaces the frame's own shape);
 - `corners`;
 - `source`: a partial source merges into the frame's source (e.g. `{"text": "Now casting"}`); a source with a different `type` replaces it.
 

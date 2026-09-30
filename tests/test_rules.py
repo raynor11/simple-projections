@@ -100,3 +100,11 @@ def test_validate_accepts_good_rules():
 def test_validate_rejects_bad_rules(rules, message):
     with pytest.raises(ValueError, match=message):
         validate_config(config_with_rules(rules))
+
+
+def test_rule_geometry_replaces_frames_shape():
+    quad = {'tl': [0, 0], 'tr': [1, 0.1], 'br': [1, 1], 'bl': [0, 0.9]}
+    frame = {'id': 'f', 'rect': [0, 0, 1, 1], 'rect_portrait': [0, 0, 0.5, 1], 'rules': [
+        {'when': {'active_any': ['cc']}, 'set': {'quad': quad}}]}
+    cfg, _ = effective_frame(frame, {'cc'}, NOON)
+    assert cfg['quad'] == quad and 'rect' not in cfg and 'rect_portrait' not in cfg

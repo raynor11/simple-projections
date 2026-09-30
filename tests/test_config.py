@@ -29,7 +29,7 @@ def test_legacy_corners_frame_is_valid():
 
 
 def test_frame_needs_rect_or_corners():
-    with pytest.raises(ValueError, match="rect or corners"):
+    with pytest.raises(ValueError, match="exactly one of rect, quad or corners"):
         validate_config(base_config(source={"type": "text", "text": "hi"}))
 
 
@@ -106,3 +106,12 @@ def test_location_forms(location, ok):
     else:
         with pytest.raises(ValueError):
             validate_config(config)
+
+
+def test_quad_frame_is_valid_and_needs_one_shape():
+    quad = {"tl": [0.1, 0.1], "tr": [0.5, 0.15], "br": [0.45, 0.5], "bl": [0.12, 0.4]}
+    validate_config(base_config(quad=quad, source={"type": "text", "text": "a"}))
+    with pytest.raises(ValueError, match="exactly one"):
+        validate_config(base_config(quad=quad, rect=[0, 0, 1, 1], source={"type": "text", "text": "a"}))
+    with pytest.raises(ValueError, match="quad"):
+        validate_config(base_config(quad={"tl": [0, 0]}, source={"type": "text", "text": "a"}))

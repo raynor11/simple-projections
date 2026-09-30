@@ -12,7 +12,8 @@ from ..playback import screen_corners, frame_canvas_corners
 from ..rules import effective_frame
 from . import widgets as w
 from .editing import (
-    History, handle_points, move_rect, resize_rect, scale_rect, snap_move, snap_resize, snap_targets,
+    History, handle_points, is_convex, move_quad, move_rect, quad_to_rect, rect_to_quad, resize_rect,
+    scale_quad, scale_rect, snap_move, snap_point, snap_resize, snap_targets,
 )
 
 
@@ -34,14 +35,15 @@ MOUSE_HINTS = [
     "Scroll to scale it", "Hold Alt while dragging to turn off snapping",
 ]
 KEY_HINTS = [
-    "Tab: next frame", "Arrows: nudge (Shift = faster)", "Ctrl/Alt+Arrows: resize", "1-4: pick corner",
+    "Tab: next frame", "Arrows: nudge (Shift = faster)", "Ctrl/Alt+Arrows: resize",
+    "Warped frames: 1-4 pick a corner, Arrows move it, Ctrl/Alt+Arrows move the frame",
 ]
 # For the terminal when calibration starts.
 HELP = [
     "Mouse: " + ", ".join(MOUSE_HINTS).lower().capitalize(),
     "Keys: " + "   ".join(KEY_HINTS),
-    "Toolbar buttons show their shortcut keys (S save, Ctrl+Z undo, N new, D delete, E screen corners, "
-    "P portrait, R preview, A auto-detect, +/- text size, H help, Q quit)",
+    "Toolbar buttons show their shortcut keys (S save, Ctrl+Z undo, N new, D delete, W warp corners, "
+    "E screen corners, P portrait, R preview, A auto-detect, +/- text size, H help, Q quit)",
 ]
 
 CURSORS = {
@@ -120,27 +122,23 @@ class CalibrationUI:
         hour, minute = PREVIEW_TIMES[self.preview]
         return datetime.datetime.now().replace(hour=hour, minute=minute)
 
-    def editable(self, frame, create=False):
+    def editable(self, frame):
         """
-        Where rect edits go, as (dict, description): the rule matching the
+        Where layout edits go, as (dict, description): the rule matching the
         current preview state -- so each state's layout can be set -- else
-        the frame itself. With create=True, a matching rule that doesn't
-        move the frame yet gets a copy of the frame's rect to edit.
+        the frame itself.
         """
         _, index = effective_frame(frame, self.preview_active_ids(), self.preview_time())
-        if index is None or 'rect' not in frame:
+        if index is None or 'corners' in frame:
             return frame, "base"
         overrides = frame['rules'][index]['set']
         if overrides.get('hidden'):
             return frame, "base"     # the frame isn't shown in this state
-        if 'rect' not in overrides and 'rect_portrait' not in overrides and create:
-            overrides['rect'] = list(frame['rect'])
-            if 'rect_portrait' in frame:
-                overrides['rect_portrait'] = list(frame['rect_portrait'])
         return overrides, f"rule {index + 1}"
 
-    def _rect_key(self):
-        return 'rect_portrait' if self.portrait else 'rect'
+    def _effective(self, frame):
+        cfg, _ = effective_frame(frame, self.preview_active_ids(), self.preview_time())
+        return cfg
 
     def _shown(self, frame, selected=False):
         """(effective cfg, canvas corners, hidden) for a frame in the current preview state."""
@@ -151,17 +149,38 @@ class CalibrationUI:
         corners = frame_canvas_corners(cfg, self._S(), selected and self.portrait)
         return cfg, corners, hidden
 
-    def _shown_rect(self, frame):
-        cfg, _, _ = self._shown(frame)
-        if self.portrait and cfg.get('rect_portrait'):
-            return list(cfg['rect_portrait'])
-        return list(cfg['rect'])
+    def shape(self, frame):
+        """The frame's shape as shown now: 'rect', 'quad' (warped corners) or legacy pixel 'corners'."""
+        cfg = self._effective(frame)
+        return next(k for k in ('quad', 'rect', 'corners') if k in cfg)
 
-    def _rect_target(self, frame):
-        """The (dict, key) holding the rect that edits change, created from what's shown if needed."""
-        shown = self._shown_rect(frame)
-        target, _ = self.editable(frame, create=True)
-        key = self._rect_key()
+    def _shown_geometry(self, frame):
+        """(shape, value) as shown now; for rects, the portrait layout while editing it."""
+        cfg = self._effective(frame)
+        kind = self.shape(frame)
+        if kind == 'rect':
+            use_portrait = self.portrait and cfg.get('rect_portrait')
+            return kind, list(cfg['rect_portrait'] if use_portrait else cfg['rect'])
+        return kind, copy.deepcopy(cfg[kind])
+
+    def _shown_rect(self, frame):
+        """The frame's rect as shown now (a warped frame's bounding box)."""
+        kind, value = self._shown_geometry(frame)
+        return value if kind == 'rect' else quad_to_rect(value) if kind == 'quad' else None
+
+    def _geometry_target(self, frame):
+        """
+        The (dict, key) holding the shape that edits change. A matching rule
+        that doesn't reshape the frame yet first gets a copy of what's shown.
+        """
+        cfg = self._effective(frame)
+        kind, shown = self._shown_geometry(frame)
+        target, _ = self.editable(frame)
+        if target is not frame and kind not in target:
+            target[kind] = copy.deepcopy(cfg[kind])
+            if kind == 'rect' and cfg.get('rect_portrait'):
+                target['rect_portrait'] = list(cfg['rect_portrait'])
+        key = 'rect_portrait' if kind == 'rect' and self.portrait else kind
         if key not in target:
             target[key] = shown
         return target, key
@@ -233,10 +252,14 @@ class CalibrationUI:
         frame = self.get_current_frame()
         if frame is None:
             return {}, False
-        if 'rect' not in frame:
-            return {k: self._visible_pos(self.canvas_to_window(frame['corners'][k]), inset)
-                    for k in CORNER_ORDER}, True
-        points = handle_points(self._shown_rect(frame))
+        kind, value = self._shown_geometry(frame)
+        if kind == 'corners':
+            return {k: self._visible_pos(self.canvas_to_window(value[k]), inset) for k in CORNER_ORDER}, True
+        if kind == 'quad':
+            canvas = self.screen_to_canvas([value[k] for k in CORNER_ORDER])
+            return {k: self._visible_pos(self.canvas_to_window(p), inset)
+                    for k, p in zip(CORNER_ORDER, canvas)}, True
+        points = handle_points(value)
         canvas = self.screen_to_canvas(list(points.values()))
         return {k: self._visible_pos(self.canvas_to_window(p), inset) for k, p in zip(points, canvas)}, False
 
@@ -258,6 +281,8 @@ class CalibrationUI:
             w.Button('add', 'Add frame', 'N'),
             w.Button('delete', 'Delete frame', 'D', enabled=frame is not None and not self.screen_mode),
             w.Button('screen', 'Screen corners', 'E', on=self.screen_mode),
+            w.Button('warp', 'Warp corners', 'W', on=frame is not None and self.shape(frame) == 'quad',
+                     enabled=frame is not None and not self.screen_mode),
             w.Button('portrait', 'Portrait layout', 'P', on=self.portrait),
             w.Button('preview', f'Preview: {self.preview}', 'R'),
             w.Button('detect', 'Auto-detect screen', 'A', enabled=self.detect is not None),
@@ -304,14 +329,21 @@ class CalibrationUI:
             pts = [self.canvas_to_window(corners[k]) for k in CORNER_ORDER]
             if selected:
                 w.fill_polygon(window, pts, (255, 255, 255, 38))
+            bad_shape = 'quad' in cfg and not is_convex(cfg['quad'])
             color = w.SELECTED if selected else w.FRAME_HOVER if hovered else w.FRAME
-            w.polyline(window, pts, color, 3 if selected else 2, dashed=hidden)
+            if bad_shape:
+                color = w.VERMILLION
+            w.polyline(window, pts, color, 4 if bad_shape else 3 if selected else 2, dashed=hidden)
             label = frame.get('label') or frame['id']
             kind = (cfg.get('source') or {}).get('type')
             if kind:
                 label += f"  ({kind})"
+            if 'quad' in cfg:
+                label += "  warped"
             if hidden:
                 label += "  hidden"
+            if bad_shape:
+                label += "  CORNERS CROSSED - drag them back"
             if selected and self.portrait and cfg.get('rect_portrait'):
                 label += "  portrait"
             self._label(window, label_font, label, (pts[0][0] + offset, pts[0][1] + 6),
@@ -347,9 +379,11 @@ class CalibrationUI:
         if self.screen_mode:
             status = f"Editing the screen corners (selected: {CORNER_ORDER.index(self.current_corner) + 1})"
         elif frame:
-            _, target = self.editable(frame) if 'rect' in frame else (None, 'corners')
-            status = (f"Selected: {frame.get('label') or frame['id']}  ·  editing {target}"
-                      f"{' (portrait layout)' if self.portrait else ''}")
+            _, target = self.editable(frame)
+            kind = self.shape(frame)
+            how = {'quad': 'warped corners', 'corners': 'pixel corners'}.get(kind, 'rectangle')
+            status = (f"Selected: {frame.get('label') or frame['id']}  ·  {how}  ·  editing {target}"
+                      f"{' (portrait layout)' if self.portrait and kind == 'rect' else ''}")
         else:
             status = "No frames yet: click Add frame (N)"
         status += f"  ·  previewing: {self.preview}"
@@ -452,8 +486,7 @@ class CalibrationUI:
         self.hover = self._hit(pos)
         kind = self.hover[0] if self.hover else None
         if kind == 'handle':
-            numbered = self.screen_mode or 'rect' not in (self.get_current_frame() or {})
-            cursor = 'move' if numbered else self.hover[1]
+            cursor = 'move' if self._numbered_handles() else self.hover[1]
         elif kind == 'frame':
             cursor = 'move'
         elif kind == 'button':
@@ -477,13 +510,12 @@ class CalibrationUI:
             return
         snapshot = copy.deepcopy(self.config)
         if kind == 'handle':
-            numbered = self.screen_mode or 'rect' not in (self.get_current_frame() or {})
-            if numbered:
+            if self._numbered_handles():
                 self.current_corner = value
             self.drag = {'handle': value, 'snapshot': snapshot, 'changed': False}
             frame = self.get_current_frame()
-            if not self.screen_mode and frame and 'rect' in frame:
-                self.drag['rect'] = self._shown_rect(frame)
+            if not self.screen_mode and frame:
+                self.drag['shape'] = self._shown_geometry(frame)
             return
         # A frame: select it and start moving it.
         self.current_frame_idx = value
@@ -491,10 +523,7 @@ class CalibrationUI:
         frame = self.frames()[value]
         self.drag = {'move': True, 'snapshot': snapshot, 'changed': False,
                      'start': self._window_to_screen(pos), 'start_canvas': self.window_to_canvas(pos)}
-        if 'rect' in frame:
-            self.drag['rect'] = self._shown_rect(frame)
-        else:
-            self.drag['corners'] = copy.deepcopy(frame['corners'])
+        self.drag['shape'] = self._shown_geometry(frame)
 
     def _drag_to(self, pos, snapping=True):
         drag = self.drag
@@ -511,26 +540,44 @@ class CalibrationUI:
             return
         if frame is None:
             return
-        if 'rect' not in frame:
+        kind, start_shape = drag['shape']
+        if kind == 'corners':
+            # Legacy frame: pixel corners, moved directly.
             if 'handle' in drag:
                 frame['corners'][drag['handle']] = [round(canvas[0], 1), round(canvas[1], 1)]
             else:
                 dx = canvas[0] - drag['start_canvas'][0]
                 dy = canvas[1] - drag['start_canvas'][1]
                 frame['corners'] = {k: [round(x + dx, 1), round(y + dy, 1)]
-                                    for k, (x, y) in drag['corners'].items()}
+                                    for k, (x, y) in start_shape.items()}
             return
 
-        target, key = self._rect_target(frame)
+        target, key = self._geometry_target(frame)
         point = self._window_to_screen(pos)
         threshold = self._snap_threshold()
         targets = snap_targets(self._other_rects())
+        if kind == 'quad':
+            if 'handle' in drag:
+                corner = point
+                if snapping:
+                    corner, self.guides = snap_point(point, targets, threshold)
+                target[key][drag['handle']] = [round(corner[0], 4), round(corner[1], 4)]
+            else:
+                dx, dy = point[0] - drag['start'][0], point[1] - drag['start'][1]
+                if snapping:
+                    # Snap the quad's bounding box, then move every corner by the same amount.
+                    box = move_rect(quad_to_rect(start_shape), dx, dy)
+                    snapped, self.guides = snap_move(box, targets, threshold)
+                    dx, dy = dx + snapped[0] - box[0], dy + snapped[1] - box[1]
+                target[key] = move_quad(start_shape, dx, dy)
+            return
+
         if 'handle' in drag:
-            rect = resize_rect(drag['rect'], drag['handle'], point)
+            rect = resize_rect(start_shape, drag['handle'], point)
             if snapping:
                 rect, self.guides = snap_resize(rect, drag['handle'], targets, threshold)
         else:
-            rect = move_rect(drag['rect'], point[0] - drag['start'][0], point[1] - drag['start'][1])
+            rect = move_rect(start_shape, point[0] - drag['start'][0], point[1] - drag['start'][1])
             if snapping:
                 rect, self.guides = snap_move(rect, targets, threshold)
         target[key] = rect
@@ -543,22 +590,29 @@ class CalibrationUI:
                 SNAP_PIXELS / max(1.0, np.linalg.norm(bl - tl)))
 
     def _other_rects(self):
+        """Other visible frames' rects (warped frames' bounding boxes), for snapping."""
         rects = []
         for i, frame in enumerate(self.frames()):
-            if i == self.current_frame_idx or 'rect' not in frame:
+            if i == self.current_frame_idx or self.shape(frame) == 'corners':
                 continue
-            cfg, _, hidden = self._shown(frame)
+            _, _, hidden = self._shown(frame)
             if not hidden:
-                rects.append(cfg['rect'])
+                rects.append(self._shown_rect(frame))
         return rects
+
+    def _numbered_handles(self):
+        """Screen corners, warped frames and legacy frames have numbered corner handles; rects have squares."""
+        frame = self.get_current_frame()
+        return self.screen_mode or (frame is not None and self.shape(frame) != 'rect')
 
     def _wheel(self, steps):
         frame = self.get_current_frame()
-        if self.screen_mode or frame is None or 'rect' not in frame or steps == 0:
+        if self.screen_mode or frame is None or self.shape(frame) == 'corners' or steps == 0:
             return
         self._change(group=('wheel', self.current_frame_idx))
-        target, key = self._rect_target(frame)
-        target[key] = scale_rect(target[key], WHEEL_SCALE ** steps)
+        target, key = self._geometry_target(frame)
+        scale = scale_quad if key == 'quad' else scale_rect
+        target[key] = scale(target[key], WHEEL_SCALE ** steps)
 
     # -- actions (shared by keys and toolbar buttons) ---------------------------------
 
@@ -567,7 +621,7 @@ class CalibrationUI:
         handler = {
             'save': self._save_config, 'undo': self.undo, 'redo': self.redo,
             'add': self._add_frame, 'delete': self._delete_frame, 'screen': self._toggle_screen_mode,
-            'portrait': self._toggle_portrait, 'preview': self._next_preview, 'detect': self._auto_detect,
+            'portrait': self._toggle_portrait, 'warp': self._toggle_warp, 'preview': self._next_preview, 'detect': self._auto_detect,
             'smaller': lambda: self._resize_ui(-1), 'bigger': lambda: self._resize_ui(1),
             'help': self._toggle_help, 'quit': self._request_quit,
         }[action]
@@ -596,6 +650,8 @@ class CalibrationUI:
             self._toggle_screen_mode()
         elif key == pygame.K_p:
             self._toggle_portrait()
+        elif key == pygame.K_w:
+            self._toggle_warp()
         elif key == pygame.K_h:
             self._toggle_help()
         elif key == pygame.K_r:
@@ -621,7 +677,37 @@ class CalibrationUI:
         self._say("Editing the screen corners: drag the numbered handles" if self.screen_mode
                   else "Editing frames")
 
+    def _toggle_warp(self):
+        """Switch the selected frame between a rectangle and four freely movable (warped) corners."""
+        frame = self.get_current_frame()
+        if frame is None or self.screen_mode:
+            self._say("Select a frame first (click it, or press Tab)")
+            return
+        kind, shown = self._shown_geometry(frame)
+        self._change()
+        target, _ = self.editable(frame)
+        if kind == 'corners':
+            # Legacy pixel corners -> a warped frame in screen space (so it follows the screen).
+            points = self.canvas_to_screen([shown[k] for k in CORNER_ORDER])
+            del frame['corners']
+            frame['quad'] = {k: [round(float(x), 4), round(float(y), 4)] for k, (x, y) in zip(CORNER_ORDER, points)}
+            self._say("Now a warped frame that follows the screen: drag its numbered corners")
+            return
+        for k in ('rect', 'rect_portrait', 'quad'):
+            target.pop(k, None)
+        if kind == 'rect':
+            target['quad'] = rect_to_quad(shown)
+            self.portrait = False
+            self._say("Warp mode: drag the numbered corners one at a time (W again for a rectangle)")
+        else:
+            target['rect'] = quad_to_rect(shown)
+            self._say("Back to a rectangle (Ctrl+Z to undo)")
+
     def _toggle_portrait(self):
+        frame = self.get_current_frame()
+        if not self.portrait and frame is not None and self.shape(frame) != 'rect':
+            self._say("A portrait layout needs a rectangular frame (press W to un-warp it)")
+            return
         self.portrait = not self.portrait
         self._say("Editing the portrait layout (used when cast content is portrait)" if self.portrait
                   else "Editing the landscape layout")
@@ -666,17 +752,28 @@ class CalibrationUI:
         frame = self.get_current_frame()
         if not frame:
             return
-        self._change(group=('frame', self.current_frame_idx, resize))
-        if 'rect' not in frame:
+        self._change(group=('frame', self.current_frame_idx, resize, self.current_corner))
+        kind = self.shape(frame)
+        if kind == 'corners':
             # Legacy frame: nudge its corners in canvas pixels.
             step = PIXEL_STEP_BIG if shift else PIXEL_STEP
             frame['corners'][self.current_corner][0] += dx * step
             frame['corners'][self.current_corner][1] += dy * step
             return
 
-        target, key_name = self._rect_target(frame)
-        rect = target[key_name]
+        target, key_name = self._geometry_target(frame)
         step = MOVE_STEP_BIG if shift else MOVE_STEP
+        if kind == 'quad':
+            # Arrows nudge the selected corner (1-4); Ctrl/Alt+Arrows move the whole frame.
+            if resize:
+                target[key_name] = move_quad(target[key_name], dx * step, dy * step)
+            else:
+                corner = target[key_name][self.current_corner]
+                target[key_name][self.current_corner] = [round(corner[0] + dx * step, 4),
+                                                         round(corner[1] + dy * step, 4)]
+            return
+
+        rect = target[key_name]
         if resize:
             rect[2] = round(max(MIN_SIZE, rect[2] + dx * step), 4)
             rect[3] = round(max(MIN_SIZE, rect[3] - dy * step), 4)   # Up grows

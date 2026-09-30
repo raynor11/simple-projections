@@ -15,7 +15,9 @@ import re
 
 ID_LIST_CONDITIONS = ('active_any', 'active_all', 'inactive_all')
 CONDITIONS = ID_LIST_CONDITIONS + ('between',)
-SETTABLE = ('hidden', 'rect', 'rect_portrait', 'corners', 'source')
+SETTABLE = ('hidden', 'rect', 'rect_portrait', 'quad', 'corners', 'source')
+# A frame's shape: exactly one applies, so a rule setting one replaces the frame's own.
+GEOMETRY = ('rect', 'quad', 'corners')
 HHMM = re.compile(r'^([01]?\d|2[0-3]):([0-5]\d)$')
 
 
@@ -62,6 +64,10 @@ def condition_holds(when, active_ids, now, self_id=None):
 def apply_overrides(base_cfg, overrides):
     """Frame config with a rule's "set" applied. A source override of the same type merges fields."""
     cfg = dict(base_cfg)
+    if any(k in overrides for k in GEOMETRY):
+        for k in GEOMETRY + ('rect_portrait',):
+            if k not in overrides:
+                cfg.pop(k, None)
     for key, value in overrides.items():
         if key == 'source':
             base_source = base_cfg.get('source') or {}

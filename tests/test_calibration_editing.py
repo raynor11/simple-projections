@@ -68,3 +68,38 @@ def test_history_undo_redo_and_grouping():
     assert config == {'n': 1}
     h.checkpoint(config)                        # a new change clears redo
     assert not h.can_redo
+
+
+from src.calibration.editing import (
+    is_convex, move_quad, quad_to_rect, rect_to_quad, scale_quad, snap_point,
+)
+
+
+def test_rect_quad_round_trip():
+    quad = rect_to_quad(RECT)
+    assert quad == {'tl': [0.1, 0.2], 'tr': [0.5, 0.2], 'br': [0.5, 0.5], 'bl': [0.1, 0.5]}
+    assert quad_to_rect(quad) == pytest.approx(RECT)
+
+
+def test_quad_to_rect_is_bounding_box():
+    quad = {'tl': [0.2, 0.1], 'tr': [0.6, 0.15], 'br': [0.5, 0.5], 'bl': [0.1, 0.45]}
+    assert quad_to_rect(quad) == pytest.approx([0.1, 0.1, 0.5, 0.4])
+
+
+def test_move_and_scale_quad():
+    quad = rect_to_quad(RECT)
+    assert move_quad(quad, 0.1, 0)['tr'] == pytest.approx([0.6, 0.2])
+    scaled = scale_quad(quad, 2)
+    assert scaled['tl'] == pytest.approx([-0.1, 0.05]) and scaled['br'] == pytest.approx([0.7, 0.65])
+
+
+def test_is_convex():
+    assert is_convex({'tl': [0, 0], 'tr': [1, 0], 'br': [0.8, 1], 'bl': [0.2, 1]})     # trapezoid
+    assert is_convex({'tl': [0.2, 0], 'tr': [1, 0], 'br': [0.8, 1], 'bl': [0, 1]})     # rhombus-ish
+    assert not is_convex({'tl': [0, 0], 'tr': [1, 0], 'br': [0, 1], 'bl': [1, 1]})     # bow-tie
+    assert not is_convex({'tl': [0, 0], 'tr': [1, 0], 'br': [0.4, 0.3], 'bl': [0, 1]})  # dented
+
+
+def test_snap_point():
+    point, guides = snap_point((0.497, 0.3), snap_targets([]), (0.01, 0.01))
+    assert point == (0.5, 0.3) and guides == [('x', 0.5)]

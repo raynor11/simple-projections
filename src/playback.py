@@ -5,7 +5,7 @@ import time
 import numpy as np
 
 from .homography import (
-    screen_homography, rect_to_canvas_corners, corners_to_array, array_to_corners, quad_footprint,
+    CORNER_ORDER, apply_homography, screen_homography, rect_to_canvas_corners, corners_to_array, array_to_corners, quad_footprint,
 )
 from .renderer import Layer
 from .rules import effective_frame
@@ -28,7 +28,14 @@ def screen_corners(config):
 
 
 def frame_canvas_corners(cfg, S, portrait=False):
-    """A frame's corners in canvas pixels: its rect (or rect_portrait) through the screen homography S."""
+    """
+    A frame's corners in canvas pixels. A rect (or rect_portrait) or a
+    free-form quad in normalized screen space goes through the screen
+    homography S; legacy corners are already canvas pixels.
+    """
+    if 'quad' in cfg:
+        points = apply_homography(S, [cfg['quad'][k] for k in CORNER_ORDER])
+        return array_to_corners(points)
     if 'rect' in cfg:
         rect = cfg['rect']
         if portrait and cfg.get('rect_portrait'):

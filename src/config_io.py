@@ -183,14 +183,17 @@ def validate_config(config):
         elif "media" not in frame:
             raise ValueError(f"{what} missing key: source")
 
+        shapes = [k for k in ("rect", "quad", "corners") if k in frame]
+        if len(shapes) != 1:
+            raise ValueError(f"{what} needs exactly one of rect, quad or corners")
         if "rect" in frame:
             _check_rect(frame["rect"], f"{what} rect")
             if "rect_portrait" in frame:
                 _check_rect(frame["rect_portrait"], f"{what} rect_portrait")
-        elif "corners" in frame:
-            _check_corners(frame["corners"], what)
+        elif "quad" in frame:
+            _check_corners(frame["quad"], f"{what} quad")
         else:
-            raise ValueError(f"{what} needs a rect or corners")
+            _check_corners(frame["corners"], what)
 
     for frame in config.get("frames", []):
         validate_rules(frame, seen_ids)
@@ -201,5 +204,7 @@ def validate_config(config):
                     _check_rect(overrides[key], f"{where} {key}")
             if "corners" in overrides:
                 _check_corners(overrides["corners"], where)
+            if "quad" in overrides:
+                _check_corners(overrides["quad"], f"{where} quad")
             if "source" in overrides and "type" in overrides["source"]:
                 _check_source(overrides["source"], where)

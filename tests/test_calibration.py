@@ -195,3 +195,75 @@ def test_text_size_controls(ui):
     for _ in range(10):
         ui.handle_key(pygame.K_MINUS)
     assert ui.ui_scale == 0.75
+
+
+# -- warped (quad) frames --------------------------------------------------------
+
+def test_warp_then_drag_one_corner_into_a_trapezoid(ui):
+    ready(ui)
+    ui.handle_key(pygame.K_w)
+    assert weather(ui)['quad'] == {'tl': [0.1, 0.1], 'tr': [0.4, 0.1], 'br': [0.4, 0.4], 'bl': [0.1, 0.4]}
+    assert 'rect' not in weather(ui)
+    ui.render_grid(pygame.Surface((1920, 1080)))
+    handles, numbered = ui._handles()
+    assert numbered and set(handles) == {'tl', 'tr', 'br', 'bl'}
+    drag(ui, handles['tr'], px(0.35, 0.13))                 # pull only the top-right corner in
+    quad = weather(ui)['quad']
+    assert quad['tr'] == pytest.approx([0.35, 0.13], abs=2e-3)
+    assert quad['tl'] == [0.1, 0.1] and quad['br'] == [0.4, 0.4]   # the others stay put
+
+
+def test_warped_frame_keyboard_moves_selected_corner_or_whole_frame(ui):
+    ui.handle_key(pygame.K_w)
+    ui.handle_key(pygame.K_3)                                 # bottom-right
+    ui.handle_key(pygame.K_RIGHT)
+    assert weather(ui)['quad']['br'] == pytest.approx([0.405, 0.4])
+    assert weather(ui)['quad']['tl'] == [0.1, 0.1]
+    ui.handle_key(pygame.K_DOWN, pygame.KMOD_CTRL)          # whole frame
+    assert weather(ui)['quad']['tl'] == pytest.approx([0.1, 0.105])
+
+
+def test_unwarp_to_bounding_rect_and_undo(ui):
+    ui.handle_key(pygame.K_w)
+    ui.handle_key(pygame.K_2)
+    ui.handle_key(pygame.K_RIGHT, pygame.KMOD_SHIFT)        # tr -> x 0.45
+    ui.handle_key(pygame.K_w)
+    assert weather(ui)['rect'] == pytest.approx([0.1, 0.1, 0.35, 0.3])
+    assert 'quad' not in weather(ui)
+    ui.handle_key(pygame.K_z, pygame.KMOD_CTRL)
+    assert 'quad' in weather(ui) and 'rect' not in weather(ui)
+
+
+def test_warp_in_a_rule_state_only_changes_that_rule(ui):
+    ui.handle_key(pygame.K_r)                                 # casting: rule 1 matches
+    ui.handle_key(pygame.K_w)
+    assert 'quad' in weather(ui)['rules'][0]['set']
+    assert weather(ui)['rect'] == [0.1, 0.1, 0.3, 0.3]     # the idle layout is untouched
+
+
+def test_legacy_corner_frame_converts_to_screen_relative_quad():
+    pygame.init()
+    config = {'canvas': {'width': 1000, 'height': 500}, 'frames': [
+        {'id': 'old', 'media': 'x.mp4',
+         'corners': {'tl': [100, 50], 'tr': [500, 50], 'br': [500, 250], 'bl': [100, 250]}}]}
+    ui = CalibrationUI(1000, 500, config)
+    ui.handle_key(pygame.K_w)
+    assert ui.config['frames'][0]['quad'] == {'tl': [0.1, 0.1], 'tr': [0.5, 0.1], 'br': [0.5, 0.5], 'bl': [0.1, 0.5]}
+    assert 'corners' not in ui.config['frames'][0]
+
+
+def test_crossed_corners_are_flagged(ui):
+    ui.handle_key(pygame.K_w)
+    weather(ui)['quad']['tr'], weather(ui)['quad']['br'] = [0.4, 0.4], [0.4, 0.1]
+    surface = pygame.Surface((1920, 1080))
+    ui.render_grid(surface)                                   # draws without error, with the warning label
+
+
+def test_playback_draws_quad_through_screen():
+    import numpy as np
+    from src.homography import screen_homography
+    from src.playback import frame_canvas_corners
+    S = screen_homography({'tl': [0, 0], 'tr': [1000, 0], 'br': [1000, 500], 'bl': [0, 500]})
+    quad = {'tl': [0.1, 0.1], 'tr': [0.5, 0.2], 'br': [0.5, 0.5], 'bl': [0.1, 0.4]}
+    corners = frame_canvas_corners({'quad': quad}, S)
+    assert np.allclose(corners['tr'], [500, 100]) and np.allclose(corners['bl'], [100, 200])

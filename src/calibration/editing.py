@@ -165,3 +165,61 @@ class History:
     @property
     def can_redo(self):
         return bool(self._redo)
+
+
+# -- free-form quads (warped frames) -----------------------------------------------
+
+QUAD_KEYS = ('tl', 'tr', 'br', 'bl')
+
+
+def rect_to_quad(rect):
+    x, y, w, h = rect
+    return {'tl': [x, y], 'tr': [round(x + w, 4), y], 'br': [round(x + w, 4), round(y + h, 4)],
+            'bl': [x, round(y + h, 4)]}
+
+
+def quad_to_rect(quad):
+    """The quad's bounding box, as a rect."""
+    xs = [quad[k][0] for k in QUAD_KEYS]
+    ys = [quad[k][1] for k in QUAD_KEYS]
+    return _rect(min(xs), min(ys), max(xs), max(ys))
+
+
+def move_quad(quad, dx, dy):
+    return {k: [round(quad[k][0] + dx, 4), round(quad[k][1] + dy, 4)] for k in QUAD_KEYS}
+
+
+def scale_quad(quad, factor):
+    """Grow or shrink the quad about its centroid."""
+    cx = sum(quad[k][0] for k in QUAD_KEYS) / 4
+    cy = sum(quad[k][1] for k in QUAD_KEYS) / 4
+    return {k: [round(cx + (quad[k][0] - cx) * factor, 4), round(cy + (quad[k][1] - cy) * factor, 4)]
+            for k in QUAD_KEYS}
+
+
+def is_convex(quad):
+    """False for a bow-tie (crossed corners) or a dented quad, which can't be warped sensibly."""
+    pts = [quad[k] for k in QUAD_KEYS]
+    signs = set()
+    for i in range(4):
+        (x0, y0), (x1, y1), (x2, y2) = pts[i], pts[(i + 1) % 4], pts[(i + 2) % 4]
+        cross = (x1 - x0) * (y2 - y1) - (y1 - y0) * (x2 - x1)
+        if abs(cross) > 1e-12:
+            signs.add(cross > 0)
+    return len(signs) == 1
+
+
+def snap_point(point, targets, threshold):
+    """Snap each coordinate of a dragged corner to a nearby target line. Returns (point, guides)."""
+    xs, ys = targets
+    x, y = point
+    guides = []
+    hit = _nearest((x,), xs, threshold[0])
+    if hit:
+        x = hit[1]
+        guides.append(('x', hit[1]))
+    hit = _nearest((y,), ys, threshold[1])
+    if hit:
+        y = hit[1]
+        guides.append(('y', hit[1]))
+    return (round(x, 4), round(y, 4)), guides
