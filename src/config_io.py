@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from .rules import validate_rules
+
 
 CONFIG_PATH = Path("config/frames.json")
 
@@ -120,6 +122,18 @@ def validate_config(config):
             _check_corners(frame["corners"], what)
         else:
             raise ValueError(f"{what} needs a rect or corners")
+
+    for frame in config.get("frames", []):
+        validate_rules(frame, seen_ids)
+        for n, rule in enumerate(frame.get("rules") or [], 1):
+            overrides, where = rule["set"], f"Frame {frame['id']!r} rule {n}"
+            for key in ("rect", "rect_portrait"):
+                if key in overrides:
+                    _check_rect(overrides[key], f"{where} {key}")
+            if "corners" in overrides:
+                _check_corners(overrides["corners"], where)
+            if "source" in overrides and "type" in overrides["source"]:
+                _check_source(overrides["source"], where)
 
 
 def new_frame(frame_id, label, media_path, canvas_width, canvas_height):

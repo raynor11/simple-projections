@@ -1,3 +1,5 @@
+import datetime
+import json
 import time
 
 import numpy as np
@@ -6,6 +8,7 @@ from .homography import (
     screen_homography, rect_to_canvas_corners, corners_to_array, array_to_corners, quad_footprint,
 )
 from .renderer import Layer
+from .rules import effective_frame
 from .sources import create_source, source_config
 
 
@@ -17,17 +20,42 @@ def full_canvas_corners(width, height):
     return {'tl': [0, 0], 'tr': [width, 0], 'br': [width, height], 'bl': [0, height]}
 
 
-class FrameState:
-    """A frame's live source plus its animated on-canvas position and opacity."""
+def _cfg_key(cfg):
+    return json.dumps(cfg, sort_keys=True)
 
-    def __init__(self, cfg, source):
+
+class FrameState:
+    """
+    A frame's live sources plus its animated on-canvas position and opacity.
+
+    base_source is the frame's own source and always stays running (its
+    active state drives other frames' rules). A rule that swaps the source
+    gets a separate override source, alive only while that rule matches.
+    """
+
+    def __init__(self, cfg, base_source):
         self.cfg = cfg
-        self.source = source
+        self.base_source = base_source
+        self.override_source = None
+        self.override_key = None
         self.alpha = 0.0
         self.corners = None          # currently displayed corners (4x2 array)
         self.target = None           # corners we're sliding toward
         self.slide_from = None
         self.slide_start = 0.0
+
+    def close(self):
+        for source in (self.base_source, self.override_source):
+            if source:
+                source.close()
+        self.override_source = self.override_key = None
+
+    def set_override(self, key, source):
+        if self.override_source:
+            self.override_source.close()
+        self.override_key, self.override_source = key, source
+        if source and self.target is not None:
+            source.set_target_size(*quad_footprint(array_to_corners(self.target)))
 
     def set_target(self, target, now, animate=True):
         if self.target is not None and np.allclose(target, self.target):
@@ -39,9 +67,10 @@ class FrameState:
             self.slide_from = self.corners.copy()
             self.slide_start = now
         self.target = target
-        w, h = quad_footprint(array_to_corners(target))
-        if self.source:
-            self.source.set_target_size(w, h)
+        size = quad_footprint(array_to_corners(target))
+        for source in (self.base_source, self.override_source):
+            if source:
+                source.set_target_size(*size)
 
     def step(self, now, dt, show):
         if self.slide_from is not None:
@@ -57,9 +86,10 @@ class FrameState:
 class Playback:
     """Owns the frames' sources and turns the config into layers each tick."""
 
-    def __init__(self, config, renderer):
+    def __init__(self, config, renderer, clock=datetime.datetime.now):
         self.renderer = renderer
         self.config = config
+        self.clock = clock
         self.frames = {}   # id -> FrameState, in config order
         self._last_tick = None
 
@@ -86,15 +116,11 @@ class Playback:
     def _add_frame(self, frame_cfg):
         frame_id = frame_cfg['id']
         source = self._make_source(source_config(frame_cfg), frame_id)
-        # Frames that are showing from the start appear immediately, not faded in.
-        state = FrameState(frame_cfg, source)
-        state.alpha = 1.0 if source is not None and source.visible else 0.0
-        self.frames[frame_id] = state
+        self.frames[frame_id] = FrameState(frame_cfg, source)
 
     def close(self):
         for state in self.frames.values():
-            if state.source:
-                state.source.close()
+            state.close()
         self.frames.clear()
 
     # -- per tick ------------------------------------------------------------
@@ -114,23 +140,50 @@ class Playback:
             return corners_to_array(rect_to_canvas_corners(rect, S))
         return corners_to_array(cfg['corners'])
 
+    def active_ids(self):
+        return {fid for fid, state in self.frames.items()
+                if state.base_source is not None and state.base_source.active}
+
+    def _shown_source(self, state, cfg):
+        """The source to display for the frame's effective config (the base one unless a rule swapped it)."""
+        src_cfg = source_config(cfg)
+        if src_cfg is None or src_cfg == source_config(state.cfg):
+            if state.override_source:
+                state.set_override(None, None)
+            return state.base_source
+        key = _cfg_key(src_cfg)
+        if key != state.override_key:
+            state.set_override(key, self._make_source(src_cfg, state.cfg['id']))
+        if state.override_source:
+            state.override_source.poll(time.monotonic())
+        return state.override_source
+
     def tick(self, now=None):
         now = time.monotonic() if now is None else now
         dt = 0.0 if self._last_tick is None else min(0.25, now - self._last_tick)
+        first_tick = self._last_tick is None
         self._last_tick = now
+
+        for state in self.frames.values():
+            if state.base_source:
+                state.base_source.poll(now)
+        active = self.active_ids()
+        wall_clock = self.clock()
 
         S = self.screen_matrix()
         layers = []
         for frame_id, state in self.frames.items():
-            if state.source is None:
+            cfg, _ = effective_frame(state.cfg, active, wall_clock)
+            source = self._shown_source(state, cfg)
+            if source is None:
                 continue
-            state.source.poll(now)
-            cfg = state.cfg
-            show = state.source.visible and not cfg.get('hidden', False)
-            state.set_target(self.frame_corners(cfg, state.source, S), now, animate=state.alpha > 0)
+            show = source.visible and not cfg.get('hidden', False)
+            if first_tick and show:
+                state.alpha = 1.0   # frames showing at startup appear immediately
+            state.set_target(self.frame_corners(cfg, source, S), now, animate=state.alpha > 0)
             state.step(now, dt, show)
             if state.alpha <= 0.0:
                 continue
-            layers.append(Layer(key=frame_id, corners=array_to_corners(state.corners),
-                                source=state.source, alpha=state.alpha, crop=state.source.crop))
+            layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(state.corners),
+                                source=source, alpha=state.alpha, crop=source.crop))
         self.renderer.render(layers)
