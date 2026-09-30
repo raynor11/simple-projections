@@ -1,17 +1,22 @@
 [Unit]
 Description=Projection Mapper
-After=graphical.target
-Wants=graphical.target
+After=multi-user.target sound.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/projection-mapper
-Environment="DISPLAY=:0"
-Environment="XAUTHORITY=/home/pi/.Xauthority"
-ExecStart=/home/pi/projection-mapper/.venv/bin/python main.py --play
+User=@USER@
+WorkingDirectory=@APP_DIR@
+# Draw straight to the display via KMS/DRM -- no desktop session needed.
+Environment="SDL_VIDEODRIVER=kmsdrm"
+# The Pi 4 V3D driver exposes GL 3.1; moderngl wants 3.3. Our shaders only
+# use features V3D actually supports, so advertising 3.3 is safe.
+Environment="MESA_GL_VERSION_OVERRIDE=3.3"
+Environment="MESA_GLSL_VERSION_OVERRIDE=330"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=@APP_DIR@/.venv/bin/python main.py --play
 Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

@@ -1,7 +1,10 @@
+# Full dev environment (macOS). On the Pi, setup_pi.sh installs opencv,
+# pygame, numpy and pyserial from apt and only pip-installs requirements-pi.txt.
 opencv-python>=4.8.0
 numpy>=1.26.0
 pygame>=2.5.0
 moderngl>=5.8.0
-python-mpv>=1.0.3
-Pillow>=10.0.0
+pyserial>=3.5
+PyChromecast>=14.0
+astral>=3.2
 pytest>=8.0.0

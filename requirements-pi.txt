@@ -1,0 +1,4 @@
+moderngl>=5.8.0
+PyChromecast>=14.0
+astral>=3.2
+pytest>=8.0.0
