@@ -5,10 +5,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.homography import (
-    compute_homography, nudge_corner, screen_homography, rect_to_canvas_corners,
+    compute_homography, screen_homography, rect_to_canvas_corners,
     uv_homography, apply_homography, quad_footprint,
 )
-from src.config_io import validate_config, new_frame
+from src.config_io import validate_config
 import numpy as np
 
 
@@ -26,21 +26,6 @@ def test_compute_homography():
 
     assert H.shape == (4, 4)
     assert isinstance(H, np.ndarray)
-
-
-def test_nudge_corner():
-    """Test corner nudging."""
-    quad = {
-        'tl': [100, 100],
-        'tr': [500, 100],
-        'br': [500, 400],
-        'bl': [100, 400]
-    }
-
-    updated = nudge_corner(quad, 'tl', 10, -5)
-
-    assert updated['tl'] == [110, 95]
-    assert updated['tr'] == [500, 100]
 
 
 def test_validate_config():
@@ -74,18 +59,6 @@ def test_validate_config_missing_keys():
 
     with pytest.raises(ValueError):
         validate_config(invalid_config)
-
-
-def test_new_frame():
-    """Test creating a new default frame."""
-    frame = new_frame("frame_1", "Test Frame", "media/test.mp4", 1920, 1080)
-
-    assert frame['id'] == "frame_1"
-    assert frame['label'] == "Test Frame"
-    assert 'tl' in frame['corners']
-    assert 'tr' in frame['corners']
-    assert 'br' in frame['corners']
-    assert 'bl' in frame['corners']
 
 
 def test_screen_homography_maps_unit_square_to_screen_corners():

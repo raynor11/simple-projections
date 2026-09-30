@@ -174,19 +174,3 @@ def validate_config(config):
                 _check_corners(overrides["corners"], where)
             if "source" in overrides and "type" in overrides["source"]:
                 _check_source(overrides["source"], where)
-
-
-def new_frame(frame_id, label, media_path, canvas_width, canvas_height):
-    """Create a new default frame (centered rectangle)."""
-    margin = 50
-    return {
-        "id": frame_id,
-        "label": label,
-        "source": {"type": "file", "path": media_path},
-        "corners": {
-            "tl": [margin, margin],
-            "tr": [canvas_width - margin, margin],
-            "br": [canvas_width - margin, canvas_height - margin],
-            "bl": [margin, canvas_height - margin]
-        }
-    }

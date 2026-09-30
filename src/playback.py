@@ -20,6 +20,23 @@ def full_canvas_corners(width, height):
     return {'tl': [0, 0], 'tr': [width, 0], 'br': [width, height], 'bl': [0, height]}
 
 
+def screen_corners(config):
+    """The screen's corners in canvas pixels; the whole canvas until a screen is detected."""
+    screen = config.get('screen') or {}
+    canvas = config['canvas']
+    return screen.get('corners') or full_canvas_corners(canvas['width'], canvas['height'])
+
+
+def frame_canvas_corners(cfg, S, portrait=False):
+    """A frame's corners in canvas pixels: its rect (or rect_portrait) through the screen homography S."""
+    if 'rect' in cfg:
+        rect = cfg['rect']
+        if portrait and cfg.get('rect_portrait'):
+            rect = cfg['rect_portrait']
+        return rect_to_canvas_corners(rect, S)
+    return cfg['corners']
+
+
 def _cfg_key(cfg):
     return json.dumps(cfg, sort_keys=True)
 
@@ -160,19 +177,11 @@ class Playback:
     # -- per tick ------------------------------------------------------------
 
     def screen_matrix(self):
-        screen = self.config.get('screen') or {}
-        corners = screen.get('corners') or full_canvas_corners(self.renderer.canvas_width,
-                                                                 self.renderer.canvas_height)
-        return screen_homography(corners)
+        return screen_homography(screen_corners(self.config))
 
     def frame_corners(self, cfg, source, S):
-        """Canvas-pixel corners for a frame, honouring rect_portrait for portrait content."""
-        if 'rect' in cfg:
-            rect = cfg['rect']
-            if source is not None and source.orientation == 'portrait' and cfg.get('rect_portrait'):
-                rect = cfg['rect_portrait']
-            return corners_to_array(rect_to_canvas_corners(rect, S))
-        return corners_to_array(cfg['corners'])
+        portrait = source is not None and source.orientation == 'portrait'
+        return corners_to_array(frame_canvas_corners(cfg, S, portrait))
 
     def active_ids(self):
         return {fid for fid, state in self.frames.items()

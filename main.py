@@ -9,7 +9,7 @@ import sys
 from src.config_io import load_config, save_config, validate_config, migrate_config, ConfigWatcher
 from src.platform_io import is_raspberry_pi
 from src.renderer import CanvasRenderer
-from src.calibration import CalibrationUI
+from src.calibration import CalibrationUI, HELP
 from src.playback import Playback, full_canvas_corners
 from src.renderer import Layer
 from src.screen_detect import DetectionError, capture_and_detect, outline_pattern
@@ -86,7 +86,7 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
     """Run calibration mode."""
     pygame.init()
     if fullscreen:
-        # See renderer.py's init_gl for why fullscreen uses the display's
+        # See renderer.py's _open_window for why fullscreen uses the display's
         # real native resolution instead of canvas_width/height or (0, 0),
         # and why it's created windowed first then switched to fullscreen.
         window_size = pygame.display.get_desktop_sizes()[display_index]
@@ -95,23 +95,27 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
         pygame.time.wait(100)
         screen = pygame.display.set_mode(window_size, pygame.FULLSCREEN, display=display_index)
     else:
-        window_size = (canvas_width, canvas_height)
+        # Scale the window down to fit the desktop; the UI draws at canvas
+        # size and is scaled to the window.
+        desk_w, desk_h = pygame.display.get_desktop_sizes()[display_index]
+        scale = min(1.0, 0.9 * desk_w / canvas_width, 0.9 * desk_h / canvas_height)
+        window_size = (int(canvas_width * scale), int(canvas_height * scale))
         screen = pygame.display.set_mode(window_size, display=display_index)
     pygame.display.set_caption("Projection Mapper - Calibration")
     clock = pygame.time.Clock()
 
-    ui = CalibrationUI(canvas_width, canvas_height, config, config_path=config_path)
+    device, camera_size = detection_camera(config)
+    detect = None
+    if device is not None:
+        def detect(show, pump):
+            return capture_and_detect(show, pump, device, (canvas_width, canvas_height), camera_size)
+
+    ui = CalibrationUI(canvas_width, canvas_height, config, config_path=config_path, detect=detect)
 
     print("Calibration Mode")
     print("Controls:")
-    print("  Tab / Shift+Tab: cycle frames")
-    print("  1-4: select corner (TL, TR, BR, BL)")
-    print("  Arrow keys: nudge corner (Shift for 10px)")
-    print("  n: add frame")
-    print("  d: delete frame")
-    print("  s: save config")
-    print("  l: reload config")
-    print("  Esc / q: quit")
+    for line in HELP:
+        print(f"  {line}")
 
     while ui.running:
         ui.handle_events()
@@ -119,6 +123,8 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
         pygame.display.flip()
         clock.tick(30)
 
+    if ui.modified:
+        print("Quit with unsaved changes (press s to save before quitting next time)")
     pygame.quit()
 
 

@@ -61,14 +61,6 @@ def homography_to_corners(homography, source_w, source_h):
     return dst[:2, :].T
 
 
-def nudge_corner(quad, corner_name, dx, dy):
-    """Nudge a corner by (dx, dy) and return updated quad."""
-    updated = quad.copy()
-    updated[corner_name][0] += dx
-    updated[corner_name][1] += dy
-    return updated
-
-
 CORNER_ORDER = ('tl', 'tr', 'br', 'bl')
 UNIT_SQUARE = np.float32([[0, 0], [1, 0], [1, 1], [0, 1]])
 
