@@ -26,4 +26,7 @@ def create_source(src_cfg, context=None):
     if kind == 'camera':
         from .v4l2 import V4L2Source
         return V4L2Source(src_cfg)
+    if kind == 'text':
+        from .text import TextSource
+        return TextSource(src_cfg)
     raise ValueError(f"Unknown source type: {kind!r}")
