@@ -221,3 +221,4 @@ __marimo__/
 media/
 config/*.json
 !config/frames.example.json
+captures/

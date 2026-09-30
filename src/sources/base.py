@@ -130,3 +130,11 @@ def bgr_to_rgba(img):
     if img.shape[2] == 4:
         return cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGBA)
+
+
+class StaticSource(Source):
+    """A fixed image, e.g. a calibration pattern."""
+
+    def __init__(self, rgba):
+        super().__init__({'type': 'static'})
+        self._publish(rgba)

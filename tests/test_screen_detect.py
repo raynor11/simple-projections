@@ -1,0 +1,68 @@
+import sys
+from pathlib import Path
+
+import cv2
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.homography import corners_to_array
+from src.screen_detect import chessboard_pattern, detect_screen, DetectionError, find_screen_quad
+
+CANVAS = (1920, 1080)
+CAM = (1600, 1200)
+
+# Where the projector's canvas lands in the camera image (a keystoned view).
+CANVAS_IN_CAM = np.float32([[180, 170], [1450, 120], [1500, 1050], [140, 980]])
+# The screen's white area, in projector pixels (what detection should recover).
+SCREEN_TRUTH = np.float32([[130, 80], [1790, 95], [1775, 1010], [140, 1000]])
+BORDER_PX = 30
+
+
+def reflectance_map(proj_to_cam, covers_screen=True):
+    """Per-camera-pixel reflectance: white screen, black border, grey wall."""
+    h, w = CANVAS[1] + 400, CANVAS[0] + 400   # the scene extends past the projection
+    offset = np.float32([200, 200])
+    scene = np.full((h, w), 0.55, np.float32)                    # wall
+    outer = SCREEN_TRUTH + np.float32([[-1, -1], [1, -1], [1, 1], [-1, 1]]) * BORDER_PX
+    cv2.fillPoly(scene, [np.int32((outer + offset) * 16)], 0.06, shift=4)          # black border
+    cv2.fillPoly(scene, [np.int32((SCREEN_TRUTH + offset) * 16)], 0.92, shift=4)   # white screen
+    shift = np.array([[1, 0, -200], [0, 1, -200], [0, 0, 1]], np.float64)
+    return cv2.warpPerspective(scene, proj_to_cam @ shift, CAM, flags=cv2.INTER_AREA)
+
+
+def photograph(projected_gray, proj_to_cam, reflect, ambient=12):
+    light = cv2.warpPerspective(projected_gray.astype(np.float32), proj_to_cam, CAM,
+                                flags=cv2.INTER_AREA)
+    img = ambient + light * reflect
+    rng = np.random.default_rng(1)
+    img = img + rng.normal(0, 2, img.shape)
+    img = cv2.GaussianBlur(img, (3, 3), 0)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+@pytest.fixture(scope='module')
+def scene():
+    corners = np.float32([[0, 0], [CANVAS[0], 0], [CANVAS[0], CANVAS[1]], [0, CANVAS[1]]])
+    proj_to_cam = cv2.getPerspectiveTransform(corners, CANVAS_IN_CAM).astype(np.float64)
+    reflect = reflectance_map(proj_to_cam)
+    board_rgba, board_px = chessboard_pattern(*CANVAS)
+    white = photograph(np.full(CANVAS[::-1], 255), proj_to_cam, reflect)
+    black = photograph(np.zeros(CANVAS[::-1]), proj_to_cam, reflect)
+    board = photograph(board_rgba[..., 0], proj_to_cam, reflect)
+    return white, black, board, board_px
+
+
+def test_detects_screen_corners_within_2px(scene):
+    white, black, board, board_px = scene
+    result = detect_screen(white, black, board, board_px, CANVAS)
+    found = corners_to_array(result.corners)
+    assert np.abs(found - SCREEN_TRUTH).max() < 2.0, found
+    assert result.warnings == []
+
+
+def test_no_screen_raises():
+    blank = np.full((CAM[1], CAM[0]), 10, np.uint8)
+    with pytest.raises(DetectionError):
+        find_screen_quad(blank, blank)
