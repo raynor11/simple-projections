@@ -24,6 +24,7 @@ import sys
 import time
 
 from src.config_io import ConfigWatcher, load_config, migrate_config, validate_config
+from src.location import resolve_location
 from src.projector.brightness import local_now, mode_at
 from src.projector.power import (
     NORMAL, POWERING_OFF, PROJECTOR_OFF, PROJECTOR_ON, SHUTDOWN_HOST,
@@ -35,6 +36,7 @@ from src.projector.viewsonic import ProjectorError, from_config
 POLL_SECONDS = 2
 BOOT_WAIT_FOR_UPS_SECONDS = 30     # if NUT never answers, power the projector on anyway
 REASSERT_SECONDS = 30 * 60         # re-send the light source mode in case the remote changed it
+LOCATION_RETRY_SECONDS = 10 * 60   # how often to retry an automatic location lookup that failed
 FAILED = object()
 
 
@@ -55,7 +57,9 @@ class Controller:
         cfg = config['projector']
         old = getattr(self, 'cfg', None)
         self.config, self.cfg = config, cfg
-        self.location = config.get('location')
+        self.location_cfg = config.get('location')
+        self.location = None
+        self._location_tried_at = None
         serial_keys = ('serial', 'baud', 'light_source_opcode', 'light_source_modes')
         if self.projector is None or any(cfg.get(k) != old.get(k) for k in serial_keys):
             if self.projector:
@@ -118,8 +122,17 @@ class Controller:
             self._apply_brightness(now)
 
     def _apply_brightness(self, now):
-        if not self.location or 'brightness' not in self.cfg:
+        if 'brightness' not in self.cfg:
             return
+        if self.location is None:
+            # Looked up (from the IP address when not configured) only now and
+            # then, since a failed lookup can block for a few seconds.
+            if self._location_tried_at is not None and now - self._location_tried_at < LOCATION_RETRY_SECONDS:
+                return
+            self._location_tried_at = now
+            self.location = resolve_location(self.location_cfg)
+            if self.location is None:
+                return
         mode = mode_at(local_now(self.location), self.location, self.cfg['brightness'])
         if mode == self.mode_sent and now - self.mode_sent_at < REASSERT_SECONDS:
             return

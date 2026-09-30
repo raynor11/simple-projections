@@ -1,6 +1,6 @@
 {
   "canvas": {"width": 1920, "height": 1080},
-  "location": {"lat": 41.88, "lon": -87.63, "timezone": "America/Chicago"},
+  "location": "auto",
   "detection": {"camera": "/dev/v4l/by-id/usb-YOUR_WEBCAM-video-index0"},
   "frames": [
     {

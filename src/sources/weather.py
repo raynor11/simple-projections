@@ -5,7 +5,11 @@ import time
 import urllib.parse
 import urllib.request
 
-from .text import TextSource
+import pygame
+
+from ..location import resolve_location
+from .text import TextSource, surface_to_rgba
+from .weather_icons import draw_icon, icon_for_code
 
 
 API_URL = "https://api.open-meteo.com/v1/forecast"
@@ -37,7 +41,7 @@ def build_url(lat, lon, units):
     params = {
         'latitude': lat,
         'longitude': lon,
-        'current': 'temperature_2m,weather_code',
+        'current': 'temperature_2m,weather_code,is_day',
         'daily': 'weather_code,temperature_2m_max,temperature_2m_min',
         'timezone': 'auto',
         'forecast_days': 4,
@@ -55,36 +59,134 @@ def parse_forecast(payload):
         for date, code, high, low in zip(daily['time'], daily['weather_code'],
                                          daily['temperature_2m_max'], daily['temperature_2m_min'])
     ]
-    return {'temp': current['temperature_2m'], 'code': current['weather_code'], 'days': days}
+    return {'temp': current['temperature_2m'], 'code': current['weather_code'],
+            'is_day': bool(current.get('is_day', 1)), 'days': days}
 
 
-def weather_rows(data, stale=False, title=None):
-    """The (text, relative size) rows to draw for the forecast."""
-    rows = []
+# -- layout ------------------------------------------------------------------
+#
+# The forecast is a list of blocks, each a centred row of items or a table
+# (rows whose columns line up). Items are ('text', str, scale) or
+# ('icon', kind, scale); scale is relative to a base size that's searched
+# for so the whole layout fills the frame.
+
+ITEM_GAP = 0.3       # between items in a row, x base size
+LINE_GAP = 0.14      # between rows, x base size
+
+
+def weather_blocks(data, stale=False, title=None):
+    blocks = []
     if title:
-        rows.append((title, 0.7))
+        blocks.append(('row', [('text', title, 0.7)]))
     if data is None:
-        return rows + [("Loading weather…", 1.0)]
-    rows.append((f"{round(data['temp'])}°", 2.4))
-    rows.append((describe(data['code']), 1.0))
+        return blocks + [('row', [('text', "Loading weather…", 1.0)])]
+    blocks.append(('row', [('icon', icon_for_code(data['code'], data.get('is_day', True)), 2.6),
+                           ('text', f"{round(data['temp'])}°", 2.6)]))
+    blocks.append(('row', [('text', describe(data['code']), 1.0)]))
     days = data['days']
     if days:
         today = days[0]
-        rows.append((f"H {round(today['high'])}°   L {round(today['low'])}°", 0.8))
-    for day in days[1:4]:
-        rows.append((f"{day['date'].strftime('%a')}  {round(day['high'])}°/{round(day['low'])}°  "
-                     f"{describe(day['code'])}", 0.6))
+        blocks.append(('row', [('text', f"H {round(today['high'])}°   L {round(today['low'])}°", 0.8)]))
+    if len(days) > 1:
+        blocks.append(('table', [
+            [('text', day['date'].strftime('%a'), 0.62), ('icon', icon_for_code(day['code']), 0.8),
+             ('text', f"{round(day['high'])}° / {round(day['low'])}°", 0.62)]
+            for day in days[1:4]
+        ]))
     if stale:
-        rows.append(("(offline — last update shown)", 0.45))
-    return rows
+        blocks.append(('row', [('text', "(offline — last update shown)", 0.45)]))
+    return blocks
+
+
+def _item_size(item, base, fonts):
+    kind, value, scale = item
+    px = max(1, round(base * scale))
+    if kind == 'icon':
+        return px, px
+    font = fonts.get(px)
+    return font.size(value)[0], font.get_height()
+
+
+def _layout(blocks, base, fonts):
+    """Sizes for every block at a base size: [(block, width, height, extra)], total width, total height."""
+    gap, line_gap = base * ITEM_GAP, base * LINE_GAP
+    measured, total_w, total_h = [], 0, 0
+    for kind, content in blocks:
+        rows = [content] if kind == 'row' else content
+        sizes = [[_item_size(item, base, fonts) for item in row] for row in rows]
+        columns = [max(row[i][0] for row in sizes) for i in range(len(sizes[0]))] if kind == 'table' else None
+        row_heights = [max(h for _, h in row) for row in sizes]
+        if kind == 'table':
+            width = sum(columns) + gap * (len(columns) - 1)
+        else:
+            width = sum(w for w, _ in sizes[0]) + gap * (len(sizes[0]) - 1)
+        height = sum(row_heights) + line_gap * (len(rows) - 1)
+        measured.append((kind, rows, sizes, columns, row_heights, width, height))
+        total_w = max(total_w, width)
+        total_h += height
+    total_h += line_gap * (len(blocks) - 1)
+    return measured, total_w, total_h
+
+
+def _fit_base(blocks, fonts, width, height):
+    lo, hi, best = 4, max(4, height), 4
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        _, w, h = _layout(blocks, mid, fonts)
+        if w <= width and h <= height:
+            best, lo = mid, mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def _draw_item(surface, item, x, y, row_height, base, fonts, color):
+    kind, value, scale = item
+    w, h = _item_size(item, base, fonts)
+    top = y + (row_height - h) / 2
+    if kind == 'icon':
+        surface.blit(draw_icon(value, w), (x, top))
+    else:
+        surface.blit(fonts.get(max(1, round(base * scale))).render(value, True, color), (x, top))
+    return w
+
+
+def render_blocks(blocks, size, fonts, color, background, padding=0.06):
+    w, h = size
+    pad = int(min(w, h) * padding)
+    base = _fit_base(blocks, fonts, max(1, w - 2 * pad), max(1, h - 2 * pad))
+    measured, _, total_h = _layout(blocks, base, fonts)
+    gap, line_gap = base * ITEM_GAP, base * LINE_GAP
+
+    surface = pygame.Surface((w, h), pygame.SRCALPHA)
+    surface.fill(background)
+    y = (h - total_h) / 2
+    for kind, rows, sizes, columns, row_heights, block_w, block_h in measured:
+        left = (w - block_w) / 2
+        for row, row_sizes, row_h in zip(rows, sizes, row_heights):
+            x = left
+            for i, item in enumerate(row):
+                if kind == 'table':
+                    # Day names left-aligned, icons centred, temperatures left-aligned.
+                    offset = (columns[i] - row_sizes[i][0]) / 2 if item[0] == 'icon' else 0
+                    _draw_item(surface, item, x + offset, y, row_h, base, fonts, color)
+                    x += columns[i] + gap
+                else:
+                    x += _draw_item(surface, item, x, y, row_h, base, fonts, color) + gap
+            y += row_h + line_gap
+    return surface_to_rgba(surface)
 
 
 class WeatherSource(TextSource):
-    """Current conditions and a 3-day forecast from Open-Meteo, refreshed every 10 minutes."""
+    """
+    Current conditions and a 3-day forecast with icons, from Open-Meteo,
+    refreshed every 10 minutes. Uses the configured location, or looks it
+    up from the network's IP address when none is set.
+    """
 
     def __init__(self, cfg, location=None):
         super().__init__(cfg)
-        self.location = location or {}
+        self.location_cfg = location
         self._data = None
         self._fetched_at = None
         self._stop = threading.Event()
@@ -115,16 +217,24 @@ class WeatherSource(TextSource):
         self.start()
 
     def _coords(self):
-        lat = self.cfg.get('lat', self.location.get('lat'))
-        lon = self.cfg.get('lon', self.location.get('lon'))
-        return lat, lon
+        if 'lat' in self.cfg and 'lon' in self.cfg:
+            return self.cfg['lat'], self.cfg['lon']
+        location = resolve_location(self.location_cfg)
+        if location is None:
+            return None, None
+        return location['lat'], location['lon']
 
     def _run(self):
+        warned = False
         while not self._stop.is_set():
             lat, lon = self._coords()
             if lat is None or lon is None:
-                print("Weather: no location configured (set top-level \"location\" or lat/lon on the source)")
-                return
+                if not warned:
+                    print("Weather: location unknown (no network yet?); retrying. "
+                          "Set \"location\": {\"lat\": ..., \"lon\": ...} to skip the lookup.")
+                    warned = True
+                self._stop.wait(RETRY_SECONDS)
+                continue
             try:
                 url = build_url(lat, lon, self.cfg.get('units', 'imperial'))
                 with urllib.request.urlopen(url, timeout=15) as resp:
@@ -140,8 +250,10 @@ class WeatherSource(TextSource):
     def _is_stale(self):
         return self._fetched_at is not None and time.monotonic() - self._fetched_at > STALE_SECONDS
 
-    def rows(self):
-        return weather_rows(self._data, stale=self._is_stale(), title=self.cfg.get('title'))
+    def render(self, size):
+        color, background = self.colors()
+        blocks = weather_blocks(self._data, stale=self._is_stale(), title=self.cfg.get('title'))
+        return render_blocks(blocks, size, self._fonts, color, background)
 
     def latest(self):
         stale = self._is_stale()

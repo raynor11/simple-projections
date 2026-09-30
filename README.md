@@ -14,7 +14,7 @@ Built for this setup:
 ## Features
 
 - **Screen detection:** the webcam finds the screen, and frames are laid out as rectangles on it. The keystone correction is exact (per-pixel perspective warp). If the projector moves, re-run detection and the layout stays put.
-- **Frame types:** video/image files, text, weather, a live camera, Chromecast and AirPlay.
+- **Frame types:** video/image files, text, weather (with icons, for your local area), a live camera, Chromecast and AirPlay.
 - **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector.
 - **Frame rules:** frames can change while something else is happening, for example "shrink the weather while casting" or "hide the message at night".
 - **Live config:** edit `config/frames.json` over SSH and the running display picks up the change.
@@ -71,9 +71,8 @@ On a Mac, a camera `device` can be an index like `0`. Chromecast, AirPlay, audio
    arecord -l                  # capture card audio device, e.g. hw:CARD=MS2109
    v4l2-ctl -d <device> --list-formats-ext   # supported capture modes
    ```
-   Also set:
-   - `location` (for weather and sunrise/sunset);
-   - the Chromecast's name as it appears in the Google Home app (`cast_name`).
+   Also set the Chromecast's name as it appears in the Google Home app (`cast_name`).
+   The location for weather and sunrise/sunset is looked up automatically (see [Configuration](#configuration)).
 2. **Check the projector link** (see [Projector control](#projector-control)):
    ```bash
    sudo systemctl stop projector-control
@@ -116,7 +115,7 @@ Cast frames that are hidden in the current preview state are drawn dashed.
 | Key | Meaning |
 |---|---|
 | `canvas` | Output size in pixels (1920×1080). Changing it needs a restart. |
-| `location` | `lat`, `lon` and optional `timezone`, for weather and sunrise/sunset |
+| `location` | For weather and sunrise/sunset. `"auto"` (or leave it out) looks it up from your internet connection's IP address, which is accurate to about city level and is cached in `config/location.auto.json` for a week. For an exact spot, or if you use a VPN, set `{"lat": ..., "lon": ..., "timezone": "America/Los_Angeles"}`. |
 | `screen.corners` | Screen corners in canvas pixels, written by `--detect-screen`. Without it, the whole canvas counts as the screen. |
 | `detection.camera` | Camera used by `--detect-screen`. Defaults to the first `camera` frame's device. |
 | `frames` | Frames, drawn in list order (later frames are drawn on top) |
@@ -136,7 +135,7 @@ Cast frames that are hidden in the current preview state are drawn dashed.
 |---|---|
 | `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image |
 | `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf). The text auto-sizes to fill the frame. |
-| `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Uses Open-Meteo; no API key needed. |
+| `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. |
 | `camera` | `device`, `width`, `height`, `fps` |
 | `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `idle_app_ids` |
 | `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds` |

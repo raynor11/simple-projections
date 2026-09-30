@@ -158,13 +158,18 @@ class TextSource(Source):
     def rows(self):
         return [(self.cfg.get('text', ''), 1.0)]
 
+    def colors(self):
+        return (parse_color(self.cfg.get('color'), (255, 255, 255, 255)),
+                parse_color(self.cfg.get('background'), (0, 0, 0, 0)))
+
+    def render(self, size):
+        """Draw the content at size=(w, h); returns an RGBA array."""
+        color, background = self.colors()
+        return render_rows(self.rows(), size, self._fonts, color=color, background=background,
+                           align=self.cfg.get('align', 'center'))
+
     def latest(self):
         if self._dirty:
             self._dirty = False
-            self._publish(render_rows(
-                self.rows(), render_size(self.target_size), self._fonts,
-                color=parse_color(self.cfg.get('color'), (255, 255, 255, 255)),
-                background=parse_color(self.cfg.get('background'), (0, 0, 0, 0)),
-                align=self.cfg.get('align', 'center'),
-            ))
+            self._publish(self.render(render_size(self.target_size)))
         return super().latest()
