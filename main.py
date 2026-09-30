@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import time
+
 import pygame
 import sys
-from pathlib import Path
 
-from src.config_io import load_config, validate_config
+from src.config_io import load_config, validate_config, migrate_config
 from src.platform_io import is_raspberry_pi
 from src.renderer import CanvasRenderer
 from src.calibration import CalibrationUI
+from src.playback import Playback
+
+FPS_LOG_SECONDS = 10
 
 
 def main():
@@ -23,7 +27,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        config = load_config(args.config)
+        config = migrate_config(load_config(args.config))
         validate_config(config)
     except Exception as e:
         print(f"Error loading config: {e}")
@@ -112,20 +116,19 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
 def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=0):
     """Run playback mode."""
     renderer = CanvasRenderer(canvas_width, canvas_height, fullscreen=fullscreen, display_index=display_index)
+    playback = None
 
     try:
         renderer.init_gl()
-
-        for frame in config.get('frames', []):
-            frame_id = frame.get('id')
-            media_path = frame.get('media')
-            if frame_id and media_path:
-                renderer.register_frame(frame_id, frame, media_path)
+        playback = Playback(config, renderer)
+        playback.start()
 
         print("Playback Mode - Press Esc to quit")
 
         clock = pygame.time.Clock()
         running = True
+        frames_drawn = 0
+        fps_window_start = time.monotonic()
 
         while running:
             for event in pygame.event.get():
@@ -135,10 +138,19 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
                     if event.key == pygame.K_ESCAPE:
                         running = False
 
-            renderer.render_frame()
+            playback.tick()
             clock.tick(30)
 
+            frames_drawn += 1
+            elapsed = time.monotonic() - fps_window_start
+            if elapsed >= FPS_LOG_SECONDS:
+                print(f"FPS: {frames_drawn / elapsed:.1f}")
+                frames_drawn = 0
+                fps_window_start = time.monotonic()
+
     finally:
+        if playback:
+            playback.close()
         renderer.close()
 
 

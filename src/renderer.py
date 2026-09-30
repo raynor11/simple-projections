@@ -1,13 +1,81 @@
+from dataclasses import dataclass
+
 import numpy as np
 import moderngl as mgl
 import pygame
-import cv2
-from .homography import compute_homography
-from .media_loader import MediaLoader
+
+from .homography import corners_to_array, uv_homography
+from .sources.base import FULL_CROP
+
+
+VERTEX_SRC = """
+in vec2 position;
+void main() {
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+"""
+
+# Texture UVs are computed per pixel from the inverse homography rather than
+# interpolated from per-vertex UVs. Interpolating UVs across the quad's two
+# triangles is affine, which bends the image along the diagonal whenever the
+# quad is keystoned; the per-pixel projective divide is exact.
+FRAGMENT_SRC = """
+uniform sampler2D texture0;
+uniform mat3 uv_from_px;
+uniform vec4 viewport;
+uniform vec2 canvas_size;
+uniform vec4 uv_crop;
+uniform float alpha;
+out vec4 color;
+void main() {
+    vec2 win = (gl_FragCoord.xy - viewport.xy) / viewport.zw;
+    // Window space is y-up; canvas pixels are y-down (top-left origin).
+    vec2 px = vec2(win.x, 1.0 - win.y) * canvas_size;
+    vec3 h = uv_from_px * vec3(px, 1.0);
+    vec2 uv = h.xy / h.z;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        discard;
+    }
+    vec4 c = texture(texture0, mix(uv_crop.xy, uv_crop.zw, uv));
+    color = vec4(c.rgb, c.a * alpha);
+}
+"""
+
+# Desktop GL 3.3 first (macOS, or the Pi with the Mesa version override the
+# service sets); GLSL 1.40 is the fallback for the Pi 4's native GL 3.1.
+GLSL_VERSIONS = ("#version 330 core\n", "#version 140\n")
+
+
+@dataclass
+class Layer:
+    """One frame to draw this tick."""
+    key: str
+    corners: dict          # {'tl': [x, y], ...} in canvas pixels
+    source: object         # sources.base.Source
+    alpha: float = 1.0
+    crop: tuple = FULL_CROP
+
+
+class _LayerGL:
+    """GPU resources for one layer, kept across ticks."""
+
+    def __init__(self, ctx, program, ebo):
+        self.vbo = ctx.buffer(reserve=4 * 2 * 4)
+        self.vao = ctx.vertex_array(program, [(self.vbo, '2f', 'position')], ebo)
+        self.texture = None
+        self.version = None
+        self.corners_key = None
+        self.uv_from_px = None
+
+    def release(self):
+        self.vao.release()
+        self.vbo.release()
+        if self.texture:
+            self.texture.release()
 
 
 class CanvasRenderer:
-    """Manages OpenGL rendering of warped frames onto a canvas."""
+    """Draws warped frames onto the canvas with OpenGL."""
 
     def __init__(self, canvas_width, canvas_height, fullscreen=False, display_index=0):
         self.canvas_width = canvas_width
@@ -16,18 +84,39 @@ class CanvasRenderer:
         self.display_index = display_index
         self.ctx = None
         self.program = None
-        self.vao = None
-        self.fbo = None
-        self.frames = {}
-        self.media_loaders = {}
+        self.ebo = None
+        self.layers = {}
 
     def init_gl(self):
         """Initialize pygame and OpenGL context."""
         pygame.init()
-        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
-        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
-        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
-        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
+        try:
+            self._open_window(gl_version=(3, 3))
+        except pygame.error as e:
+            print(f"GL 3.3 context unavailable ({e}); falling back to GL 3.1")
+            self._open_window(gl_version=(3, 1))
+        pygame.display.set_caption("Projection Mapper")
+        pygame.mouse.set_visible(not self.fullscreen)
+
+        self.ctx = mgl.create_context(require=310)
+        print(f"OpenGL: {self.ctx.info['GL_RENDERER']} / {self.ctx.info['GL_VERSION']}")
+        self._create_shader_program()
+        self.ebo = self.ctx.buffer(np.array([0, 1, 2, 0, 2, 3], dtype='i4'))
+        self.ctx.enable(mgl.BLEND)
+        self.ctx.blend_func = (mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA)
+
+    def _open_window(self, gl_version):
+        major, minor = gl_version
+        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, major)
+        pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, minor)
+        if gl_version >= (3, 2):
+            pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
+            pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
+        else:
+            pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, 0)
+            pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, False)
+
+        flags = pygame.DOUBLEBUF | pygame.OPENGL
         if self.fullscreen:
             # Use the display's actual native resolution rather than
             # canvas_width/height -- forcing a resolution the display
@@ -42,143 +131,99 @@ class CanvasRenderer:
             # granting the freshly-launched process focus, silently
             # dropping the fullscreen Space transition. Create windowed
             # first, let the event queue settle, then switch to fullscreen.
-            pygame.display.set_mode(window_size, pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
+            pygame.display.set_mode(window_size, flags, display=self.display_index)
             pygame.event.pump()
             pygame.time.wait(100)
-            pygame.display.set_mode(window_size, pygame.FULLSCREEN | pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
+            pygame.display.set_mode(window_size, pygame.FULLSCREEN | flags, display=self.display_index)
         else:
             window_size = (self.canvas_width, self.canvas_height)
-            pygame.display.set_mode(window_size, pygame.DOUBLEBUF | pygame.OPENGL, display=self.display_index)
-        pygame.display.set_caption("Projection Mapper")
-
-        self.ctx = mgl.create_context()
-        self._create_shader_program()
-        self._create_canvas_framebuffer()
+            pygame.display.set_mode(window_size, flags, display=self.display_index)
 
     def _create_shader_program(self):
-        """Compile vertex and fragment shaders."""
-        vertex_src = """
-        #version 330 core
-        in vec2 position;
-        in vec2 uv;
-        out vec2 frag_uv;
-        uniform mat4 transform;
-        void main() {
-            frag_uv = uv;
-            gl_Position = transform * vec4(position, 0.0, 1.0);
-        }
-        """
+        last_error = None
+        for header in GLSL_VERSIONS:
+            try:
+                self.program = self.ctx.program(vertex_shader=header + VERTEX_SRC,
+                                                fragment_shader=header + FRAGMENT_SRC)
+                return
+            except mgl.Error as e:
+                last_error = e
+        raise RuntimeError(f"Could not compile shaders: {last_error}")
 
-        fragment_src = """
-        #version 330 core
-        in vec2 frag_uv;
-        out vec4 color;
-        uniform sampler2D texture0;
-        void main() {
-            if (frag_uv.x < 0.0 || frag_uv.x > 1.0 || frag_uv.y < 0.0 || frag_uv.y > 1.0) {
-                color = vec4(0.0);
-            } else {
-                color = texture(texture0, frag_uv);
-            }
-        }
-        """
-
-        self.program = self.ctx.program(vertex_shader=vertex_src, fragment_shader=fragment_src)
-
-    def _create_canvas_framebuffer(self):
-        """Create framebuffer for off-screen canvas rendering."""
-        self.ctx.enable(mgl.BLEND)
-        self.ctx.blend_func = (mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA)
-
-    def register_frame(self, frame_id, frame_config, media_path):
-        """Register a frame with media and corners."""
-        self.frames[frame_id] = frame_config
-        try:
-            self.media_loaders[frame_id] = MediaLoader(media_path)
-        except Exception as e:
-            print(f"Error loading media for frame {frame_id}: {e}")
-
-    def render_frame(self):
-        """Render all frames to the canvas and present."""
+    def render(self, layers):
+        """Draw the given layers (in order, later on top) and present."""
         self.ctx.clear(0.0, 0.0, 0.0, 1.0)
+        viewport = self.ctx.viewport
+        self.program['viewport'].value = tuple(float(v) for v in viewport)
+        self.program['canvas_size'].value = (float(self.canvas_width), float(self.canvas_height))
+        self.program['texture0'].value = 0
 
-        for frame_id, frame_config in self.frames.items():
-            if frame_id not in self.media_loaders:
-                continue
+        drawn = set()
+        for layer in layers:
+            drawn.add(layer.key)
+            gl = self.layers.get(layer.key)
+            if gl is None:
+                gl = self.layers[layer.key] = _LayerGL(self.ctx, self.program, self.ebo)
+            if self._update_texture(gl, layer.source) and layer.alpha > 0.0:
+                self._update_geometry(gl, layer.corners)
+                self._draw(gl, layer)
 
-            loader = self.media_loaders[frame_id]
-            frame_data = loader.get_next_frame()
-
-            if frame_data is None:
-                continue
-
-            img, src_w, src_h = frame_data
-
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img_rgb = np.ascontiguousarray(img_rgb)
-
-            texture = self.ctx.texture(
-                (src_w, src_h),
-                3,
-                img_rgb.tobytes()
-            )
-
-            self._render_quad(frame_config, src_w, src_h, texture)
-            texture.release()
+        for key in list(self.layers):
+            if key not in drawn:
+                self.layers.pop(key).release()
 
         pygame.display.flip()
 
-    def _render_quad(self, frame_config, src_w, src_h, texture):
-        """Render a single warped quad."""
-        corners = frame_config['corners']
-        quad = np.array([
-            corners['tl'],
-            corners['tr'],
-            corners['br'],
-            corners['bl']
-        ], dtype=np.float32)
+    def _update_texture(self, gl, source):
+        """Upload the source's newest image if it changed. Returns whether there's anything to draw."""
+        data = source.latest()
+        if data is None:
+            return gl.texture is not None
+        version, img = data
+        if version == gl.version:
+            return True
+        h, w = img.shape[:2]
+        img = np.ascontiguousarray(img)
+        if gl.texture is None or gl.texture.size != (w, h):
+            if gl.texture:
+                gl.texture.release()
+            gl.texture = self.ctx.texture((w, h), 4, img)
+            gl.texture.filter = (mgl.LINEAR, mgl.LINEAR)
+            gl.texture.repeat_x = False
+            gl.texture.repeat_y = False
+        else:
+            gl.texture.write(img)
+        gl.version = version
+        return True
 
-        quad_normalized = quad.copy()
-        quad_normalized[:, 0] = (quad[:, 0] / self.canvas_width) * 2.0 - 1.0
-        # Corners are in top-left-origin, y-down pixel space (matching what
-        # calibration mode shows and saves), but OpenGL clip space is
-        # y-up (-1 = bottom, +1 = top). Without flipping, a corner
-        # calibrated near the top of the screen renders near the bottom.
-        quad_normalized[:, 1] = 1.0 - (quad[:, 1] / self.canvas_height) * 2.0
+    def _update_geometry(self, gl, corners):
+        quad = corners_to_array(corners)
+        key = quad.tobytes()
+        if key == gl.corners_key:
+            return
+        ndc = np.empty_like(quad)
+        ndc[:, 0] = quad[:, 0] / self.canvas_width * 2.0 - 1.0
+        # Corners are y-down canvas pixels; clip space is y-up.
+        ndc[:, 1] = 1.0 - quad[:, 1] / self.canvas_height * 2.0
+        gl.vbo.write(ndc.astype('f4').tobytes())
+        # GLSL mat3 is column-major; transposing the row-major numpy matrix
+        # lays its bytes out that way.
+        gl.uv_from_px = np.ascontiguousarray(uv_homography(corners).T, dtype='f4').tobytes()
+        gl.corners_key = key
 
-        vertices = np.array([
-            quad_normalized[0, 0], quad_normalized[0, 1], 0, 0,
-            quad_normalized[1, 0], quad_normalized[1, 1], 1, 0,
-            quad_normalized[2, 0], quad_normalized[2, 1], 1, 1,
-            quad_normalized[3, 0], quad_normalized[3, 1], 0, 1,
-        ], dtype='f4')
-
-        indices = np.array([0, 1, 2, 0, 2, 3], dtype='i4')
-
-        vbo = self.ctx.buffer(vertices)
-        ebo = self.ctx.buffer(indices)
-        vao = self.ctx.vertex_array(self.program, [(vbo, '2f 2f', 'position', 'uv')], ebo)
-
-        texture.use(0)
-        self.program['texture0'].value = 0
-
-        transform = np.eye(4, dtype=np.float32)
-        self.program['transform'].write(transform)
-
-        vao.render(mgl.TRIANGLES)
-        vao.release()
-        vbo.release()
-        ebo.release()
+    def _draw(self, gl, layer):
+        gl.texture.use(0)
+        self.program['uv_from_px'].write(gl.uv_from_px)
+        self.program['uv_crop'].value = tuple(float(v) for v in layer.crop)
+        self.program['alpha'].value = float(max(0.0, min(1.0, layer.alpha)))
+        gl.vao.render(mgl.TRIANGLES)
 
     def close(self):
         """Cleanup OpenGL resources."""
-        for loader in self.media_loaders.values():
-            loader.close()
-
+        for gl in self.layers.values():
+            gl.release()
+        self.layers.clear()
         if self.ctx:
             self.ctx.release()
-
+            self.ctx = None
         pygame.quit()
-
-    def __del__(self):
-        self.close()
