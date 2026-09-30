@@ -115,7 +115,7 @@ Cast frames that are hidden in the current preview state are drawn dashed.
 | Key | Meaning |
 |---|---|
 | `canvas` | Output size in pixels (1920×1080). Changing it needs a restart. |
-| `location` | For weather and sunrise/sunset. `"auto"` (or leave it out) looks it up from your internet connection's IP address, which is accurate to about city level and is cached in `config/location.auto.json` for a week. For an exact spot, or if you use a VPN, set `{"lat": ..., "lon": ..., "timezone": "America/Los_Angeles"}`. |
+| `location` | For weather and sunrise/sunset, most to least precise: `{"lat": ..., "lon": ..., "timezone": "America/Los_Angeles"}`; `{"address": "123 Main St, Springfield, IL 62701"}`, which is looked up once (US Census geocoder, or OpenStreetMap for non-US addresses) and cached in `config/location.address.json` until the address changes; or `"auto"` (or leave it out), which uses your internet connection's IP address, is accurate to about city level (wrong behind a VPN) and is cached for a week. |
 | `screen.corners` | Screen corners in canvas pixels, written by `--detect-screen`. Without it, the whole canvas counts as the screen. |
 | `detection.camera` | Camera used by `--detect-screen`. Defaults to the first `camera` frame's device. |
 | `frames` | Frames, drawn in list order (later frames are drawn on top) |

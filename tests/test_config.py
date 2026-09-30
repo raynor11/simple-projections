@@ -92,3 +92,17 @@ def test_canvas_size_must_be_positive_int():
 def test_example_config_is_valid():
     example = Path(__file__).parent.parent / "config" / "frames.example.json"
     validate_config(migrate_config(load_config(example)))
+
+
+@pytest.mark.parametrize("location, ok", [
+    ("auto", True), ({"address": "1 Main St, Town, ST 00000"}, True), ({"lat": 1, "lon": 2}, True),
+    ({"address": ""}, False), ({"lat": 1}, False), ("somewhere", False),
+])
+def test_location_forms(location, ok):
+    config = base_config(rect=[0, 0, 1, 1], source={"type": "text", "text": "a"})
+    config["location"] = location
+    if ok:
+        validate_config(config)
+    else:
+        with pytest.raises(ValueError):
+            validate_config(config)

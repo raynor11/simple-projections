@@ -151,14 +151,19 @@ def validate_config(config):
     if screen is not None and "corners" in screen:
         _check_corners(screen["corners"], "Screen")
 
-    # Leave "location" out (or set "auto") to look it up from the IP address.
+    # Leave "location" out (or set "auto") to look it up from the IP address,
+    # or give {"address": ...} to geocode a street address.
     location = config.get("location")
     if location is not None and location != "auto":
         if not isinstance(location, dict):
-            raise ValueError('Location must be "auto" or {"lat": ..., "lon": ...}')
-        for key in ("lat", "lon"):
-            if not isinstance(location.get(key), (int, float)):
-                raise ValueError(f"Location missing numeric {key}")
+            raise ValueError('Location must be "auto", {"address": ...} or {"lat": ..., "lon": ...}')
+        if "address" in location and "lat" not in location:
+            if not isinstance(location["address"], str) or not location["address"].strip():
+                raise ValueError("Location address must be a non-empty string")
+        else:
+            for key in ("lat", "lon"):
+                if not isinstance(location.get(key), (int, float)):
+                    raise ValueError(f"Location missing numeric {key}")
 
     projector = config.get("projector")
     if projector is not None:
