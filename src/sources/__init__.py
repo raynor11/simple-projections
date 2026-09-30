@@ -35,4 +35,7 @@ def create_source(src_cfg, context=None):
     if kind == 'chromecast':
         from .chromecast import ChromecastSource
         return ChromecastSource(src_cfg)
+    if kind == 'airplay':
+        from .airplay import AirPlaySource
+        return AirPlaySource(src_cfg)
     raise ValueError(f"Unknown source type: {kind!r}")

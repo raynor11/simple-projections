@@ -1,0 +1,24 @@
+[Unit]
+Description=UxPlay AirPlay receiver (feeds the projection mapper's AirPlay frame)
+After=network-online.target sound.target avahi-daemon.service
+Wants=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+User=@USER@
+# -p           legacy ports; the RTSP control connection the AirPlay frame watches is TCP 7000
+# -v4l2 -bt709 Pi 4 hardware H.264 decoding (and its full-range color workaround)
+# -nohold      a new phone can take over from one that's still connected
+# -vs          video goes into the v4l2loopback device the projection mapper reads,
+#              scaled with black bars to a fixed 1280x720 so a portrait phone shows up
+#              pillarboxed (cropped back out by the AirPlay source) and the loopback's
+#              format never changes when the phone rotates
+# -as          audio to the projector over HDMI
+ExecStart=/usr/bin/uxplay -n Projector -nh -p -v4l2 -bt709 -nohold \
+    -as "alsasink device=projector" \
+    -vs "videoscale ! videoconvert ! video/x-raw,format=YUY2,width=1280,height=720,pixel-aspect-ratio=1/1 ! v4l2sink device=/dev/video10"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,8 @@ APP_USER="$(whoami)"
 
 echo "Installing system dependencies..."
 sudo apt-get update
+# Kernel headers first: v4l2loopback-dkms (below) builds against them.
+sudo apt-get install -y linux-headers-rpi-v8 || sudo apt-get install -y raspberrypi-kernel-headers || true
 # opencv/pygame/numpy come from apt rather than pip: Debian's pygame links
 # the system SDL2, which is built with the kmsdrm backend we need to draw
 # straight to the display without a desktop session.
@@ -26,7 +28,12 @@ sudo apt-get install -y \
     alsa-utils \
     gstreamer1.0-tools \
     gstreamer1.0-alsa \
-    gstreamer1.0-plugins-good
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-libav \
+    avahi-daemon \
+    uxplay \
+    v4l2loopback-dkms
 
 echo "Creating Python virtual environment..."
 python3 -m venv --system-site-packages .venv
@@ -46,6 +53,12 @@ if ! grep -q "video=HDMI-A-1:" "$CMDLINE"; then
     sudo sed -i '1 s/$/ video=HDMI-A-1:1920x1080@60/' "$CMDLINE"
 fi
 
+echo "Configuring the AirPlay video loopback device and HDMI audio..."
+sudo cp scripts/system/v4l2loopback.conf /etc/modprobe.d/v4l2loopback.conf
+echo v4l2loopback | sudo tee /etc/modules-load.d/v4l2loopback.conf > /dev/null
+sudo modprobe v4l2loopback || echo "v4l2loopback will load after reboot"
+sudo cp scripts/system/asound.conf /etc/asound.conf
+
 install_service() {
     local name="$1"
     sed -e "s|@USER@|$APP_USER|g" -e "s|@APP_DIR@|$APP_DIR|g" \
@@ -54,8 +67,9 @@ install_service() {
 
 echo "Installing systemd services..."
 install_service projection-mapper.service
+install_service uxplay.service
 sudo systemctl daemon-reload
-sudo systemctl enable projection-mapper
+sudo systemctl enable projection-mapper uxplay
 
 echo "Setup complete! Reboot to apply group membership and the HDMI mode."
 echo "To start the service: sudo systemctl start projection-mapper"
