@@ -32,4 +32,7 @@ def create_source(src_cfg, context=None):
     if kind == 'weather':
         from .weather import WeatherSource
         return WeatherSource(src_cfg, location=context.get('location'))
+    if kind == 'chromecast':
+        from .chromecast import ChromecastSource
+        return ChromecastSource(src_cfg)
     raise ValueError(f"Unknown source type: {kind!r}")

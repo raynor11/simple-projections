@@ -124,6 +124,7 @@ class Playback:
         for frame_id, state in self.frames.items():
             if state.source is None:
                 continue
+            state.source.poll(now)
             cfg = state.cfg
             show = state.source.visible and not cfg.get('hidden', False)
             state.set_target(self.frame_corners(cfg, state.source, S), now, animate=state.alpha > 0)

@@ -38,6 +38,10 @@ class Source:
         self.cfg = dict(cfg)
         return True
 
+    def poll(self, now):
+        """Called every render tick, whether or not the frame is showing."""
+        pass
+
     # -- state read by the render loop --------------------------------------
 
     def latest(self):
