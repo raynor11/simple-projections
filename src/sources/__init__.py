@@ -29,4 +29,7 @@ def create_source(src_cfg, context=None):
     if kind == 'text':
         from .text import TextSource
         return TextSource(src_cfg)
+    if kind == 'weather':
+        from .weather import WeatherSource
+        return WeatherSource(src_cfg, location=context.get('location'))
     raise ValueError(f"Unknown source type: {kind!r}")
