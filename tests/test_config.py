@@ -61,3 +61,29 @@ def test_save_then_load_round_trip(tmp_path):
     save_config(config, path)
     assert load_config(path) == config
     assert not (tmp_path / "frames.json.tmp").exists()
+
+
+def test_config_watcher_reloads_valid_edits_and_skips_invalid(tmp_path):
+    import os
+    from src.config_io import ConfigWatcher
+    path = tmp_path / "frames.json"
+    good = base_config(rect=[0, 0, 1, 1], source={"type": "text", "text": "a"})
+    save_config(good, path)
+    watcher = ConfigWatcher(path, interval=0)
+    assert watcher.check(1) is None                       # unchanged
+
+    good["frames"][0]["source"]["text"] = "b"
+    save_config(good, path)
+    os.utime(path, ns=(10**18, 10**18))
+    assert watcher.check(2)["frames"][0]["source"]["text"] == "b"
+
+    path.write_text('{"canvas": {}}')
+    os.utime(path, ns=(2 * 10**18, 2 * 10**18))
+    assert watcher.check(3) is None                       # invalid: skipped
+
+
+def test_canvas_size_must_be_positive_int():
+    config = base_config(rect=[0, 0, 1, 1], source={"type": "text", "text": "a"})
+    config["canvas"]["width"] = "x"
+    with pytest.raises(ValueError, match="positive integer"):
+        validate_config(config)

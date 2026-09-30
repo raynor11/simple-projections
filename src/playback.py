@@ -123,6 +123,40 @@ class Playback:
             state.close()
         self.frames.clear()
 
+    def apply_config(self, new_config):
+        """
+        Switch to an edited config without restarting: frames are matched by
+        id, geometry and rules change in place, and a source is only
+        recreated when it can't take the change itself (e.g. a different
+        device) -- so cameras and capture cards aren't reopened needlessly.
+        """
+        location_changed = new_config.get('location') != self.config.get('location')
+        self.config = new_config
+        old_frames, self.frames = self.frames, {}
+        for frame_cfg in new_config.get('frames', []):
+            frame_id = frame_cfg['id']
+            state = old_frames.pop(frame_id, None)
+            if state is None:
+                self._add_frame(frame_cfg)
+                continue
+            new_src, old_src = source_config(frame_cfg), source_config(state.cfg)
+            needs_new = location_changed and (new_src or {}).get('type') == 'weather'
+            if new_src != old_src or needs_new:
+                keep = (not needs_new and state.base_source is not None and new_src is not None
+                        and old_src is not None and new_src.get('type') == old_src.get('type')
+                        and state.base_source.update(new_src))
+                if not keep:
+                    if state.base_source:
+                        state.base_source.close()
+                    state.base_source = self._make_source(new_src, frame_id)
+                    if state.base_source and state.target is not None:
+                        state.base_source.set_target_size(*quad_footprint(array_to_corners(state.target)))
+                state.set_override(None, None)
+            state.cfg = frame_cfg
+            self.frames[frame_id] = state
+        for state in old_frames.values():
+            state.close()
+
     # -- per tick ------------------------------------------------------------
 
     def screen_matrix(self):

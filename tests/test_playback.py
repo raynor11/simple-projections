@@ -98,3 +98,29 @@ def test_time_rule_hides_frame(playback):
     playback.tick(1.0)
     playback.tick(2.0)
     assert layer(playback, 'msg') is None
+
+
+def test_apply_config_keeps_updates_and_replaces_sources(playback, monkeypatch):
+    playback.tick(0.0)
+    cast, text = FakeSource.instances[0], FakeSource.instances[1]
+    new_config = {'canvas': {'width': 1000, 'height': 1000}, 'frames': [
+        {'id': 'msg', 'rect': [0, 0, 0.5, 0.5], 'source': {'type': 'text', 'text': 'Edited'}},
+        {'id': 'new', 'rect': [0.5, 0, 0.5, 0.5], 'source': {'type': 'text', 'text': 'New'}},
+        {'id': 'cc', 'rect': [0.5, 0.5, 0.5, 0.5], 'source': {'type': 'cast', 'device': 'other'}},
+    ]}
+    # FakeSource.update() always succeeds for same-type changes, like the text source.
+    playback.apply_config(new_config)
+    assert list(playback.frames) == ['msg', 'new', 'cc']
+    assert playback.frames['msg'].base_source is text and text.cfg['text'] == 'Edited'
+    assert playback.frames['cc'].base_source is cast
+
+
+def test_apply_config_removes_frames_and_recreates_on_failed_update(playback):
+    playback.tick(0.0)
+    cast, text = FakeSource.instances[0], FakeSource.instances[1]
+    cast.update = lambda cfg: False   # e.g. a device change a capture source can't take in place
+    playback.apply_config({'canvas': {'width': 1000, 'height': 1000}, 'frames': [
+        {'id': 'cc', 'rect': [0, 0, 1, 1], 'source': {'type': 'cast', 'device': 'other'}},
+    ]})
+    assert text.closed and cast.closed
+    assert playback.frames['cc'].base_source is FakeSource.instances[-1]

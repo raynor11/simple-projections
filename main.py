@@ -5,7 +5,7 @@ import time
 import pygame
 import sys
 
-from src.config_io import load_config, validate_config, migrate_config
+from src.config_io import load_config, validate_config, migrate_config, ConfigWatcher
 from src.platform_io import is_raspberry_pi
 from src.renderer import CanvasRenderer
 from src.calibration import CalibrationUI
@@ -70,7 +70,7 @@ def main():
     if args.calibrate:
         run_calibration(config, canvas_width, canvas_height, fullscreen, display_index, args.config)
     else:
-        run_playback(config, canvas_width, canvas_height, fullscreen, display_index)
+        run_playback(config, canvas_width, canvas_height, fullscreen, display_index, args.config)
 
 
 def run_calibration(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None):
@@ -113,8 +113,8 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
     pygame.quit()
 
 
-def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=0):
-    """Run playback mode."""
+def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None):
+    """Run playback mode. Edits to the config file are picked up live."""
     renderer = CanvasRenderer(canvas_width, canvas_height, fullscreen=fullscreen, display_index=display_index)
     playback = None
 
@@ -125,6 +125,7 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
 
         print("Playback Mode - Press Esc to quit")
 
+        watcher = ConfigWatcher(config_path) if config_path else None
         clock = pygame.time.Clock()
         running = True
         frames_drawn = 0
@@ -137,6 +138,13 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         running = False
+
+            if watcher:
+                new_config = watcher.check(time.monotonic())
+                if new_config is not None:
+                    if new_config['canvas'] != config['canvas']:
+                        print("Canvas size changed; restart to apply it")
+                    playback.apply_config(new_config)
 
             playback.tick()
             clock.tick(30)

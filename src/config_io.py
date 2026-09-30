@@ -31,6 +31,44 @@ def save_config(config, path=CONFIG_PATH):
     tmp.replace(path)
 
 
+class ConfigWatcher:
+    """Notices edits to the config file (checked at most once per interval) and loads them."""
+
+    def __init__(self, path, interval=1.0):
+        self.path = Path(path)
+        self.interval = interval
+        self._mtime = self._stat()
+        self._last_check = 0.0
+
+    def _stat(self):
+        try:
+            return self.path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def check(self, now):
+        """
+        Return the new, validated config if the file changed since the last
+        check, else None. An invalid edit is reported and skipped, so the
+        running config stays in effect until the file is fixed.
+        """
+        if now - self._last_check < self.interval:
+            return None
+        self._last_check = now
+        mtime = self._stat()
+        if mtime is None or mtime == self._mtime:
+            return None
+        self._mtime = mtime
+        try:
+            config = migrate_config(load_config(self.path))
+            validate_config(config)
+        except Exception as e:
+            print(f"Config change ignored, fix the file and save again: {e}")
+            return None
+        print(f"Config reloaded: {self.path}")
+        return config
+
+
 def migrate_config(config):
     """Convert legacy fields in place: a frame's "media": "path" becomes a file source."""
     for frame in config.get("frames", []):
@@ -89,6 +127,8 @@ def validate_config(config):
     for key in ["width", "height"]:
         if key not in canvas:
             raise ValueError(f"Canvas missing key: {key}")
+        if not isinstance(canvas[key], int) or canvas[key] <= 0:
+            raise ValueError(f"Canvas {key} must be a positive integer")
 
     screen = config.get("screen")
     if screen is not None and "corners" in screen:
