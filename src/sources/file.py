@@ -3,7 +3,7 @@ from pathlib import Path
 
 import cv2
 
-from .base import Source, ThreadedSource, bgr_to_rgba
+from .base import FrameRing, Source, ThreadedSource, bgr_to_rgba
 
 
 VIDEO_SUFFIXES = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
@@ -47,7 +47,13 @@ class ImageFileSource(Source):
 
 
 class VideoFileSource(ThreadedSource):
-    """A looping video, decoded in a background thread and paced to its frame rate."""
+    """
+    A looping video, decoded in a background thread and paced to its frame
+    rate. Frames are published in OpenCV's BGR order at their native size:
+    the GPU swaps the channels and scales them while drawing.
+    """
+
+    pixel_format = 'BGR'
 
     def update(self, cfg):
         return cfg.get('path') == self.cfg.get('path')
@@ -60,17 +66,18 @@ class VideoFileSource(ThreadedSource):
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
         interval = 1.0 / min(max(fps, 1), 60)
         next_time = time.monotonic()
+        ring, shrink_ring = FrameRing(), FrameRing()
         try:
             while not self._stop.is_set():
-                ok, frame = cap.read()
+                ok, frame = cap.read(ring.next())
                 if not ok:
                     # Loop back to the start at end of file.
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ok, frame = cap.read()
+                    ok, frame = cap.read(ring.next())
                     if not ok:
                         print(f"Video produced no frames: {self.cfg['path']}")
                         return
-                self._publish(bgr_to_rgba(self._fit_to_target(frame)))
+                self._publish(self._shrink_for_target(ring.filled(frame), shrink_ring))
 
                 next_time += interval
                 delay = next_time - time.monotonic()

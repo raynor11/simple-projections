@@ -13,7 +13,7 @@ from src.calibration import CalibrationUI, HELP
 from src.playback import Playback, full_canvas_corners
 from src.renderer import Layer
 from src.screen_detect import DetectionError, capture_and_detect, outline_pattern
-from src.sources.base import StaticSource
+from src.sources.base import StaticSource, wait_for_frame
 from src.sources.text import TextSource
 from src.stats import Stats, format_summary
 
@@ -220,7 +220,6 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
         print("Playback Mode - Press Esc to quit")
 
         watcher = ConfigWatcher(config_path) if config_path else None
-        clock = pygame.time.Clock()
         stats = Stats(STATS_SECONDS)
         overlay_source, overlay = stats_overlay(canvas_width, canvas_height) if show_stats else (None, None)
         if overlay_source:
@@ -253,7 +252,9 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
                 print(line)
                 if overlay_source:
                     overlay_source.update(dict(overlay_source.cfg, text=line.replace(" | ", "\n")))
-            clock.tick(60)   # poll often; Playback renders only on change, at most 30 fps
+            # Wake as soon as a source has a new frame (or after 1/60 s for
+            # input and animations); Playback renders only what changed.
+            wait_for_frame(1 / 60)
 
     finally:
         if playback:

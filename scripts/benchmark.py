@@ -28,6 +28,7 @@ import pygame
 
 from src.playback import Playback
 from src.renderer import CanvasRenderer
+from src.sources.base import wait_for_frame
 from src.stats import Stats, format_summary
 
 
@@ -60,7 +61,6 @@ def run(name, seconds, media, width, height, fullscreen):
     renderer.init_gl()
     playback = Playback(scenario_config(name, media, width, height), renderer)
     playback.start()
-    clock = pygame.time.Clock()
     warmup = 3.0
     stats = Stats(interval=seconds)
     start = time.monotonic()
@@ -71,7 +71,7 @@ def run(name, seconds, media, width, height, fullscreen):
             if now - start < warmup:
                 playback.tick()
                 stats = Stats(interval=seconds)       # discard warm-up (decoder start, first fetches)
-                clock.tick(60)   # poll often; Playback renders only on change, at most 30 fps
+                wait_for_frame(1 / 60)
                 continue
             t = time.perf_counter()
             rendered = playback.tick()
@@ -81,7 +81,7 @@ def run(name, seconds, media, width, height, fullscreen):
             summary = stats.maybe_report()
             if summary:
                 return summary
-            clock.tick(60)   # poll often; Playback renders only on change, at most 30 fps
+            wait_for_frame(1 / 60)
     finally:
         playback.close()
         renderer.close()

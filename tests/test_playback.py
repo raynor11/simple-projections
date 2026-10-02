@@ -172,4 +172,19 @@ def test_render_rate_capped(playback):
     playback.tick(0.0)
     FakeSource.instances[1]._publish(FakeSource.instances[1].latest()[1])
     assert playback.tick(0.01) is False                   # changed, but within 1/30 s of the last frame
-    assert playback.tick(0.034) is True                   # picked up on the next tick
+    assert playback.tick(0.026) is True                   # picked up on a following tick
+
+
+def test_shrink_only_when_at_least_twice_the_target():
+    import numpy as np
+    from src.sources.base import FrameRing, Source
+    s = Source({'type': 'x'})
+    ring = FrameRing()
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    s.set_target_size(1152, 540)                          # under 2x in width: GPU scales
+    assert s._shrink_for_target(frame, ring) is frame
+    s.set_target_size(480, 270)                           # 4x: shrink on the CPU
+    small = s._shrink_for_target(frame, ring)
+    assert small.shape == (270, 480, 3)
+    again = s._shrink_for_target(frame, ring)
+    assert again.shape == (270, 480, 3) and again is not small   # ring rotates buffers

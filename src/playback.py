@@ -16,7 +16,7 @@ from .sources import create_source, source_config
 DIM_CHECK_SECONDS = 60
 RULES_SECONDS = 0.5          # rule state only changes on cast start/stop or at time boundaries
 FORCE_REDRAW_SECONDS = 2.0   # redraw now and then even if nothing changed, as a safety net
-MAX_FPS = 30                 # the loop polls faster (to catch new frames promptly) but renders at most this often
+MAX_FPS = 40                 # above 30 fps content, so jitter doesn't drop frames; the loop polls at 60 Hz
 FADE_SECONDS = 0.25
 SLIDE_SECONDS = 0.25
 

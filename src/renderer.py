@@ -1,11 +1,13 @@
+import os
 import time
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 import moderngl as mgl
 import pygame
 
-from .homography import corners_to_array, uv_homography
+from .homography import corners_to_array, quad_footprint, uv_homography
 from .sources.base import FULL_CROP
 
 
@@ -28,6 +30,7 @@ uniform vec2 canvas_size;
 uniform vec4 uv_crop;
 uniform float alpha;
 uniform float dim;
+uniform int swap_rb;
 out vec4 color;
 void main() {
     vec2 win = (gl_FragCoord.xy - viewport.xy) / viewport.zw;
@@ -39,6 +42,9 @@ void main() {
         discard;
     }
     vec4 c = texture(texture0, mix(uv_crop.xy, uv_crop.zw, uv));
+    if (swap_rb == 1) {
+        c = c.bgra;   // BGR(A) frames straight from OpenCV
+    }
     color = vec4(c.rgb * dim, c.a * alpha);
 }
 """
@@ -46,6 +52,14 @@ void main() {
 # Desktop GL 3.3 first (macOS, or the Pi with the Mesa version override the
 # service sets); GLSL 1.40 is the fallback for the Pi 4's native GL 3.1.
 GLSL_VERSIONS = ("#version 330 core\n", "#version 140\n")
+
+# Some GPU drivers convert 3-channel uploads on the CPU internally. Set
+# PM_UPLOAD_RGBA=1 to pad frames to 4 channels instead (compare both with
+# scripts/benchmark.py on the Pi).
+UPLOAD_RGBA = os.environ.get('PM_UPLOAD_RGBA') == '1'
+# Textures shown at less than 1/MIPMAP_RATIO of their size get mipmaps, so
+# heavy downscaling doesn't shimmer.
+MIPMAP_RATIO = 2.0
 
 
 @dataclass
@@ -68,6 +82,8 @@ class _LayerGL:
         self.version = None
         self.corners_key = None
         self.uv_from_px = None
+        self.footprint = None      # on-canvas size (w, h) of the quad
+        self.mipmapped = False
 
     def release(self):
         self.vao.release()
@@ -175,11 +191,11 @@ class CanvasRenderer:
             gl = self.layers.get(layer.key)
             if gl is None:
                 gl = self.layers[layer.key] = _LayerGL(self.ctx, self.program, self.ebo)
+            self._update_geometry(gl, layer.corners)
             t = time.perf_counter()
             has_texture = self._update_texture(gl, layer.source)
             upload_s += time.perf_counter() - t
             if has_texture and layer.alpha > 0.0:
-                self._update_geometry(gl, layer.corners)
                 self._draw(gl, layer)
 
         for key in list(self.layers):
@@ -201,20 +217,33 @@ class CanvasRenderer:
             return True
         if gl.version is not None and version > gl.version + 1:
             self._dropped += version - gl.version - 1   # frames the source made that were never shown
-        h, w = img.shape[:2]
+        if img.ndim == 2:
+            img = img[:, :, None]
+        if UPLOAD_RGBA and img.shape[2] == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+        h, w, components = img.shape
         img = np.ascontiguousarray(img)
         self._uploaded_bytes += img.nbytes
         self._uploads += 1
-        if gl.texture is None or gl.texture.size != (w, h):
+        mipmaps = (gl.footprint is not None and
+                   (w > MIPMAP_RATIO * gl.footprint[0] or h > MIPMAP_RATIO * gl.footprint[1]))
+        if (gl.texture is None or gl.texture.size != (w, h) or gl.texture.components != components
+                or gl.mipmapped != mipmaps):
             if gl.texture:
                 gl.texture.release()
-            gl.texture = self.ctx.texture((w, h), 4, img)
-            gl.texture.filter = (mgl.LINEAR, mgl.LINEAR)
+            # alignment=1: 3-channel rows aren't always a multiple of 4 bytes.
+            gl.texture = self.ctx.texture((w, h), components, img, alignment=1)
             gl.texture.repeat_x = False
             gl.texture.repeat_y = False
+            gl.mipmapped = mipmaps
+            gl.texture.filter = ((mgl.LINEAR_MIPMAP_LINEAR, mgl.LINEAR) if mipmaps
+                                 else (mgl.LINEAR, mgl.LINEAR))
         else:
-            gl.texture.write(img)
+            gl.texture.write(img, alignment=1)
+        if mipmaps:
+            gl.texture.build_mipmaps()
         gl.version = version
+        gl.swap_rb = source.pixel_format.startswith('BGR')
         return True
 
     def _update_geometry(self, gl, corners):
@@ -230,6 +259,7 @@ class CanvasRenderer:
         # GLSL mat3 is column-major; transposing the row-major numpy matrix
         # lays its bytes out that way.
         gl.uv_from_px = np.ascontiguousarray(uv_homography(corners).T, dtype='f4').tobytes()
+        gl.footprint = quad_footprint(corners)
         gl.corners_key = key
 
     def _draw(self, gl, layer):
@@ -237,6 +267,7 @@ class CanvasRenderer:
         self.program['uv_from_px'].write(gl.uv_from_px)
         self.program['uv_crop'].value = tuple(float(v) for v in layer.crop)
         self.program['alpha'].value = float(max(0.0, min(1.0, layer.alpha)))
+        self.program['swap_rb'].value = 1 if getattr(gl, 'swap_rb', False) else 0
         gl.vao.render(mgl.TRIANGLES)
 
     def close(self):

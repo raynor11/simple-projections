@@ -1,5 +1,12 @@
 """Frame content sources: files, cameras, capture cards, text, weather, casting."""
 
+import cv2
+
+# Each live source already decodes on its own thread; OpenCV's internal
+# thread pools on top of that only contend for the Pi's four cores. 0 is
+# OpenCV's "run sequentially" setting (1 is ignored by some backends).
+cv2.setNumThreads(0)
+
 
 def source_config(frame_cfg):
     """
