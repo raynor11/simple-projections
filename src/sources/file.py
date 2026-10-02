@@ -1,4 +1,7 @@
+import os
+import sys
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
@@ -7,6 +10,57 @@ from .base import FrameRing, Source, ThreadedSource, bgr_to_rgba
 
 
 VIDEO_SUFFIXES = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
+DEMUXERS = {'.mp4': 'qtdemux', '.mov': 'qtdemux', '.mkv': 'matroskademux', '.webm': 'matroskademux'}
+
+
+@lru_cache(maxsize=1)
+def opencv_has_gstreamer():
+    return any(line.strip().startswith('GStreamer:') and 'YES' in line
+               for line in cv2.getBuildInformation().splitlines())
+
+
+def hardware_pipelines(path):
+    """
+    GStreamer pipelines that decode H.264 on the Raspberry Pi 4's hardware
+    decoder (v4l2h264dec), best first: colour conversion on the ISP
+    (v4l2convert), then on the CPU (videoconvert). Empty if the container
+    isn't one we can demux this way.
+    """
+    demux = DEMUXERS.get(Path(path).suffix.lower())
+    if demux is None:
+        return []
+    src = f'filesrc location="{path}" ! {demux} ! h264parse ! v4l2h264dec'
+    sink = 'video/x-raw,format=BGR ! appsink drop=true max-buffers=2 sync=false'
+    return [f'{src} ! v4l2convert ! {sink}', f'{src} ! videoconvert ! {sink}']
+
+
+def open_video(path):
+    """
+    (capture, decoder name). Uses the Pi's hardware H.264 decoder when
+    OpenCV has GStreamer and the file is H.264; otherwise FFmpeg in
+    software. PM_VIDEO_DECODER=software forces the fallback (to compare).
+    """
+    want_hw = (os.environ.get('PM_VIDEO_DECODER', 'auto') != 'software'
+               and sys.platform.startswith('linux') and opencv_has_gstreamer())
+    if want_hw:
+        for name, pipeline in zip(('hardware (v4l2h264dec + v4l2convert)',
+                                   'hardware (v4l2h264dec + videoconvert)'), hardware_pipelines(path)):
+            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            if cap.isOpened():
+                ok, _ = cap.read()     # a pipeline can open but fail to negotiate; check a frame decodes
+                if ok:
+                    cap.release()
+                    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER), name
+            cap.release()
+    return cv2.VideoCapture(str(path)), 'software (FFmpeg)'
+
+
+def video_fps(path):
+    """The file's frame rate, read from its header with FFmpeg (GStreamer appsinks often don't report it)."""
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    cap.release()
+    return min(max(fps, 1), 60)
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
 
 
@@ -59,23 +113,29 @@ class VideoFileSource(ThreadedSource):
         return cfg.get('path') == self.cfg.get('path')
 
     def _run(self):
-        cap = cv2.VideoCapture(str(self.cfg['path']))
+        path = self.cfg['path']
+        interval = 1.0 / video_fps(path)
+        cap, decoder = open_video(path)
         if not cap.isOpened():
-            print(f"Failed to open video: {self.cfg['path']}")
+            print(f"Failed to open video: {path}")
             return
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        interval = 1.0 / min(max(fps, 1), 60)
+        print(f"Video {Path(path).name}: {decoder} decoding")
         next_time = time.monotonic()
         ring, shrink_ring = FrameRing(), FrameRing()
         try:
             while not self._stop.is_set():
                 ok, frame = cap.read(ring.next())
                 if not ok:
-                    # Loop back to the start at end of file.
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    # Loop back to the start at end of file. A GStreamer pipeline
+                    # can't rewind reliably, so it's reopened instead.
+                    if decoder.startswith('software'):
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    else:
+                        cap.release()
+                        cap, _ = open_video(path)
                     ok, frame = cap.read(ring.next())
                     if not ok:
-                        print(f"Video produced no frames: {self.cfg['path']}")
+                        print(f"Video produced no frames: {path}")
                         return
                 self._publish(self._shrink_for_target(ring.filled(frame), shrink_ring))
 

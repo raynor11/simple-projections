@@ -14,7 +14,9 @@ User=@USER@
 #              pillarboxed (cropped back out by the AirPlay source) and the loopback's
 #              format never changes when the phone rotates
 # -as          audio to the projector over HDMI
-ExecStart=/usr/bin/uxplay -n Projector -nh -p -v4l2 -bt709 -nohold \
+# -s           tell the phone the display is 1280x720, so it streams no more than that
+#              and the CPU-side videoscale below has little to do
+ExecStart=/usr/bin/uxplay -n Projector -nh -p -v4l2 -bt709 -nohold -s 1280x720 \
     -as "alsasink device=projector" \
     -vs "videoscale ! videoconvert ! video/x-raw,format=YUY2,width=1280,height=720,pixel-aspect-ratio=1/1 ! v4l2sink device=/dev/video10"
 Restart=always

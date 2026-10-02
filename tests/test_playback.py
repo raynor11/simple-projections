@@ -188,3 +188,34 @@ def test_shrink_only_when_at_least_twice_the_target():
     assert small.shape == (270, 480, 3)
     again = s._shrink_for_target(frame, ring)
     assert again.shape == (270, 480, 3) and again is not small   # ring rotates buffers
+
+
+def test_hardware_pipelines_and_fallback(monkeypatch):
+    import src.sources.file as file_mod
+    pipes = file_mod.hardware_pipelines('/media/clip.mp4')
+    assert pipes[0].startswith('filesrc location="/media/clip.mp4" ! qtdemux ! h264parse ! v4l2h264dec ! v4l2convert')
+    assert 'videoconvert' in pipes[1] and pipes[0].endswith('appsink drop=true max-buffers=2 sync=false')
+    assert file_mod.hardware_pipelines('/media/clip.avi') == []
+
+    opened = []
+
+    class FakeCap:
+        def __init__(self, arg, backend=None):
+            opened.append(arg)
+            self.hw = backend is not None
+        def isOpened(self):
+            return True
+        def read(self, *a):
+            return (not self.hw), None                        # hardware pipelines fail to decode
+        def release(self):
+            pass
+
+    monkeypatch.setattr(file_mod.cv2, 'VideoCapture', FakeCap)
+    monkeypatch.setattr(file_mod.sys, 'platform', 'linux')
+    monkeypatch.setattr(file_mod, 'opencv_has_gstreamer', lambda: True)
+    cap, name = file_mod.open_video('/media/clip.mp4')
+    assert name == 'software (FFmpeg)' and len(opened) == 3   # tried both pipelines, then FFmpeg
+    monkeypatch.setenv('PM_VIDEO_DECODER', 'software')
+    opened.clear()
+    file_mod.open_video('/media/clip.mp4')
+    assert len(opened) == 1                                   # forced straight to software

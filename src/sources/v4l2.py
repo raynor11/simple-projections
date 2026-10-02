@@ -20,13 +20,39 @@ def parse_device(device):
     return device
 
 
-def open_capture(device, width=None, height=None, fps=None, fourcc='MJPG'):
+def gstreamer_mjpeg_pipeline(device, width, height, fps):
+    """
+    Read MJPEG from a V4L2 device and decode it on the Pi's hardware JPEG
+    decoder (v4l2jpegdec), converting colour on the ISP (v4l2convert).
+    """
+    rate = f',framerate={int(fps)}/1' if fps else ''
+    return (f'v4l2src device={device} ! image/jpeg,width={width},height={height}{rate} ! '
+            f'v4l2jpegdec ! v4l2convert ! video/x-raw,format=BGR ! appsink drop=true max-buffers=1 sync=false')
+
+
+def open_capture(device, width=None, height=None, fps=None, fourcc='MJPG', decoder='opencv'):
+    """
+    Open a live capture device. decoder='gstreamer' (Linux, MJPEG devices)
+    tries the Pi's hardware JPEG decoder first and falls back to OpenCV's
+    own V4L2 capture + libjpeg-turbo, which is the default until measured
+    faster on the Pi.
+    """
+    device = parse_device(device)
+    if decoder == 'gstreamer' and sys.platform.startswith('linux') and isinstance(device, str) and width:
+        cap = cv2.VideoCapture(gstreamer_mjpeg_pipeline(device, width, height, fps), cv2.CAP_GSTREAMER)
+        if cap.isOpened():
+            return cap
+        cap.release()
+        print(f"Hardware JPEG decoding unavailable for {device}; using OpenCV")
+    return _open_v4l2(device, width, height, fps, fourcc)
+
+
+def _open_v4l2(device, width=None, height=None, fps=None, fourcc='MJPG'):
     """
     Open a live capture device, by default requesting MJPG (what USB capture
     cards and webcams stream at 720p+). Pass fourcc=None to take the
     device's own format, e.g. for a v4l2loopback device.
     """
-    device = parse_device(device)
     on_linux = sys.platform.startswith('linux')
     cap = cv2.VideoCapture(device, cv2.CAP_V4L2 if on_linux else cv2.CAP_ANY)
     if not cap.isOpened():
@@ -54,7 +80,7 @@ class V4L2Source(ThreadedSource):
 
     pixel_format = 'BGR'
 
-    DEVICE_KEYS = ('device', 'width', 'height', 'fps', 'fourcc')
+    DEVICE_KEYS = ('device', 'width', 'height', 'fps', 'fourcc', 'decoder')
     RECONNECT_SECONDS = RECONNECT_SECONDS
 
     def __init__(self, cfg):
@@ -72,7 +98,7 @@ class V4L2Source(ThreadedSource):
         while not self._stop.is_set():
             cap = open_capture(self.cfg['device'], self.cfg.get('width', DEFAULT_SIZE[0]),
                                self.cfg.get('height', DEFAULT_SIZE[1]), self.cfg.get('fps'),
-                               self.cfg.get('fourcc', 'MJPG'))
+                               self.cfg.get('fourcc', 'MJPG'), self.cfg.get('decoder', 'opencv'))
             if cap is None:
                 if not self._warned:
                     print(f"Capture device unavailable, retrying: {self.cfg['device']}")

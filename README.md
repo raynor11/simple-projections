@@ -282,6 +282,48 @@ These parts can't be tested off the hardware:
   - turning the switch back on *during* the Pi's shutdown still brings it back.
 - [ ] With the camera, weather, text and one active cast, the logged FPS stays at 25 or more (`journalctl -u projection-mapper -f`).
 
+## Performance on the Pi
+
+**Prepare videos on the Mac before copying them to the Pi:**
+
+```bash
+scripts/prepare_media.sh ~/Movies/clip.mov                  # -> media/clip.mp4, 1080p30 H.264
+WIDTH=1280 scripts/prepare_media.sh ~/Movies/clip.mov       # smaller, for a smaller frame
+```
+
+The Pi 4 decodes H.264 in hardware; other codecs (HEVC, AV1, VP9) and 4K files fall back to slow software decoding. The script needs `ffmpeg` (`brew install ffmpeg`). Sizing a video close to its frame's on-screen size also cuts upload work.
+
+**Decoders.** At startup each video logs which decoder it got: `hardware (v4l2h264dec + v4l2convert)` on the Pi, or `software (FFmpeg)`. Cameras and the capture card use OpenCV's V4L2 capture by default. Add `"decoder": "gstreamer"` to a camera or Chromecast source to try the Pi's hardware JPEG decoder; it falls back automatically if it's unavailable. Capture defaults to 1280×720; set `width`/`height` lower for small frames.
+
+**Stats.** Playback logs a line every 10 s:
+
+```
+FPS 29.8 | tick 1.6/3.3ms (avg/p95) | upload 2.7ms + draw 0.1ms per frame | 185MB/s uploaded | 0.0 dropped/s | CPU 83% | RSS 407MB | 52°C | throttled=0x0
+```
+
+- CPU is a percentage of one core.
+- `throttled` other than `0x0` means undervoltage or overheating (check the power supply and the fan).
+- `python main.py --play --stats` also shows these numbers on screen.
+
+The display only redraws when something on it changes, so text and weather alone show an FPS near zero.
+
+**Benchmark.** Run it before and after changes:
+
+```bash
+python scripts/benchmark.py all --seconds 30 --json results.json     # add --fullscreen on the Pi
+```
+
+| Scenario | What it shows |
+|---|---|
+| `static` | Text and weather only |
+| `video` | Plus a looping 1080p video |
+| `typical` | Plus a second video standing in for a cast |
+| `stress` | Plus a camera-sized video and another text frame |
+
+To compare options on the Pi:
+- `PM_VIDEO_DECODER=software` forces software decoding.
+- `PM_UPLOAD_RGBA=1` uploads 4-channel textures instead of 3.
+
 ## Operating
 
 ```bash
