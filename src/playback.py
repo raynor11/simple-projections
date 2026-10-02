@@ -1,5 +1,6 @@
 import datetime
 import json
+import threading
 import time
 
 import numpy as np
@@ -12,6 +13,7 @@ from .rules import effective_frame
 from .sources import create_source, source_config
 
 
+DIM_CHECK_SECONDS = 60
 FADE_SECONDS = 0.25
 SLIDE_SECONDS = 0.25
 
@@ -116,12 +118,36 @@ class Playback:
         self.clock = clock
         self.frames = {}   # id -> FrameState, in config order
         self._last_tick = None
+        self.dim = 1.0
+        self._dim_stop = threading.Event()
 
     # -- setup ---------------------------------------------------------------
 
     def start(self):
         for frame_cfg in self.config.get('frames', []):
             self._add_frame(frame_cfg)
+        threading.Thread(target=self._dim_loop, name='SoftwareDim', daemon=True).start()
+
+    def _dim_loop(self):
+        """
+        Keep self.dim matching projector.brightness.software_dim for the
+        time of day. Runs off the render thread: resolving the location can
+        involve a network lookup.
+        """
+        from .location import resolve_location
+        from .projector.brightness import dim_at, local_now
+        location, location_cfg = None, object()
+        while not self._dim_stop.is_set():
+            brightness = (self.config.get('projector') or {}).get('brightness')
+            if brightness and brightness.get('software_dim'):
+                if self.config.get('location') != location_cfg:
+                    location_cfg = self.config.get('location')
+                    location = resolve_location(location_cfg)
+                if location is not None:
+                    self.dim = dim_at(local_now(location), location, brightness)
+            else:
+                self.dim = 1.0
+            self._dim_stop.wait(DIM_CHECK_SECONDS)
 
     def _context(self):
         return {'location': self.config.get('location')}
@@ -143,6 +169,7 @@ class Playback:
         self.frames[frame_id] = FrameState(frame_cfg, source)
 
     def close(self):
+        self._dim_stop.set()
         for state in self.frames.values():
             state.close()
         self.frames.clear()
@@ -236,4 +263,4 @@ class Playback:
                 continue
             layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(state.corners),
                                 source=source, alpha=state.alpha, crop=source.crop))
-        self.renderer.render(layers)
+        self.renderer.render(layers, dim=self.dim)

@@ -53,10 +53,15 @@
   ],
   "projector": {
     "serial": "/dev/serial/by-id/usb-FTDI_YOUR_ADAPTER-if00-port0",
-    "baud": 19200,
+    "baud": 115200,
     "ups": "apc@localhost",
-    "light_source_opcode": [17, 16],
-    "brightness": {"day": "normal", "dusk": "eco", "night": "supereco", "twilight_offset_min": 30},
+    "input": "hdmi1",
+    "aspect": "16:9",
+    "volume": 5,
+    "brightness": {
+      "day": "normal", "dusk": "eco", "night": "eco", "twilight_offset_min": 30,
+      "software_dim": {"day": 1.0, "dusk": 0.9, "night": 0.75}
+    },
     "power_loss_debounce_s": 10,
     "projector_off_timeout_s": 90
   }

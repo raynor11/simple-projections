@@ -28,8 +28,11 @@ def test_parse_reply():
     assert parse_reply(hexbytes("05 14 00 03 00 00 00 01 18")) == 1        # power on
     assert parse_reply(hexbytes("05 14 00 03 00 00 00 03 1A")) == 3        # cooling
     assert parse_reply(hexbytes("05 14 00 04 00 00 00 32 00 4A")) == 50    # 2-byte value
+    # The manual's Normal-mode reply has a checksum that doesn't follow its own
+    # rule (0x27, should be 0x22); replies like it are accepted with a warning.
+    assert parse_reply(hexbytes("05 14 00 03 00 00 00 0B 27")) == 0x0B
     with pytest.raises(ProjectorError):
-        parse_reply(hexbytes("05 14 00 03 00 00 00 01 99"))                 # bad checksum
+        parse_reply(hexbytes("05 14 00 05 00 00 00 01"))                    # truncated
 
 
 class FakeSerial:
@@ -66,12 +69,48 @@ def test_power_state_and_commands():
 
 
 def test_light_source_modes():
-    p, fake = projector([ACK, hexbytes("05 14 00 03 00 00 00 01 18")])
-    p.set_light_source('supereco')
-    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 11 10 03 70")
-    assert p.light_source() == 'eco'
+    # Writes and read-backs from the LS740-4K command table (UG p.59).
+    p, fake = projector([ACK, hexbytes("05 14 00 03 00 00 00 0B 27"), ACK, ACK,
+                         hexbytes("05 14 00 03 00 00 00 00 17")])
+    p.set_light_source('normal')
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 11 10 00 6D")
+    assert p.light_source() == 'normal'                       # reads back as 0x0B, not 0x00
+    assert fake.written[-1] == hexbytes("07 14 00 05 00 34 00 00 11 10 6E")
+    p.set_light_source('eco')
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 11 10 01 6E")
+    p.set_light_source('dynamic_black')
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 11 10 09 76")
+    assert p.light_source() == 'custom_power'                 # OSD Light Source Power 50-100%
     with pytest.raises(ProjectorError):
-        p.set_light_source('turbo')
+        p.set_light_source('supereco')                        # not on this model
+
+
+def test_input_aspect_volume_blank_hours():
+    p, fake = projector([ACK, ACK, ACK, ACK, ACK, hexbytes("05 14 00 06 00 00 00 B8 0B 00 00 DD")])
+    p.set_input('hdmi1')
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 13 01 03 63")      # UG p.63
+    p.set_aspect('16:9')
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 12 04 03 65")      # UG p.60
+    p.set_volume(5)
+    assert fake.written[-1][:9] == hexbytes("06 14 00 04 00 34 13 2A 05")     # UG p.64 (NN = volume)
+    p.blank(True)
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 12 09 01 68")      # UG p.61
+    p.blank(False)
+    assert fake.written[-1] == hexbytes("06 14 00 04 00 34 12 09 00 67")
+    assert p.light_source_hours() == 3000                                     # UG p.68 example reply
+    assert fake.written[-1] == hexbytes("07 14 00 05 00 34 00 00 15 01 63")
+
+
+def test_bad_arguments_rejected():
+    p, _ = projector([])
+    for call in (lambda: p.set_input('vga'), lambda: p.set_aspect('5:4'), lambda: p.set_volume(11)):
+        with pytest.raises(ProjectorError):
+            call()
+
+
+def test_default_baud_is_115200():
+    from src.projector.viewsonic import from_config
+    assert from_config({'serial': 'x'}).baud == 115200
 
 
 def test_no_response_raises():

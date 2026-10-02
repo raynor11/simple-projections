@@ -26,6 +26,7 @@ uniform vec4 viewport;
 uniform vec2 canvas_size;
 uniform vec4 uv_crop;
 uniform float alpha;
+uniform float dim;
 out vec4 color;
 void main() {
     vec2 win = (gl_FragCoord.xy - viewport.xy) / viewport.zw;
@@ -37,7 +38,7 @@ void main() {
         discard;
     }
     vec4 c = texture(texture0, mix(uv_crop.xy, uv_crop.zw, uv));
-    color = vec4(c.rgb, c.a * alpha);
+    color = vec4(c.rgb * dim, c.a * alpha);
 }
 """
 
@@ -150,9 +151,13 @@ class CanvasRenderer:
                 last_error = e
         raise RuntimeError(f"Could not compile shaders: {last_error}")
 
-    def render(self, layers):
-        """Draw the given layers (in order, later on top) and present."""
+    def render(self, layers, dim=1.0):
+        """
+        Draw the given layers (in order, later on top) and present. dim
+        scales the output brightness (e.g. 0.75 at night).
+        """
         self.ctx.clear(0.0, 0.0, 0.0, 1.0)
+        self.program['dim'].value = float(max(0.0, min(1.0, dim)))
         viewport = self.ctx.viewport
         self.program['viewport'].value = tuple(float(v) for v in viewport)
         self.program['canvas_size'].value = (float(self.canvas_width), float(self.canvas_height))

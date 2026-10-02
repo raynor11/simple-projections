@@ -118,20 +118,29 @@ def _check_source(source, what):
 
 
 def _check_projector(projector):
-    from .projector.viewsonic import DEFAULT_LIGHT_SOURCE_MODES
+    from .projector.viewsonic import LIGHT_SOURCE_MODES, INPUTS, ASPECTS
     if "serial" not in projector:
         raise ValueError("Projector missing key: serial")
-    modes = projector.get("light_source_modes") or DEFAULT_LIGHT_SOURCE_MODES
     brightness = projector.get("brightness")
     if brightness is not None:
         for phase in ("day", "dusk", "night"):
-            if phase in brightness and brightness[phase] not in modes:
+            if phase in brightness and brightness[phase] not in LIGHT_SOURCE_MODES:
                 raise ValueError(f"Projector brightness {phase}: unknown light source mode "
-                                 f"{brightness[phase]!r} (known: {', '.join(modes)})")
-    opcode = projector.get("light_source_opcode")
-    if opcode is not None and not (isinstance(opcode, list) and len(opcode) == 2
-                                   and all(isinstance(b, int) and 0 <= b <= 255 for b in opcode)):
-        raise ValueError("Projector light_source_opcode must be two bytes, e.g. [17, 16]")
+                                 f"{brightness[phase]!r} (the LS740-4K has: {', '.join(LIGHT_SOURCE_MODES)})")
+        dim = brightness.get("software_dim")
+        if dim is not None:
+            for phase, value in dim.items():
+                if phase not in ("day", "dusk", "night") or not isinstance(value, (int, float)) \
+                        or not 0.1 <= value <= 1.0:
+                    raise ValueError("Projector brightness software_dim needs day/dusk/night values "
+                                     "between 0.1 and 1.0")
+    if projector.get("input", "hdmi1") not in INPUTS:
+        raise ValueError(f"Projector input must be one of: {', '.join(INPUTS)}")
+    if projector.get("aspect", "16:9") not in ASPECTS:
+        raise ValueError(f"Projector aspect must be one of: {', '.join(ASPECTS)}")
+    volume = projector.get("volume")
+    if volume is not None and not (isinstance(volume, int) and 0 <= volume <= 10):
+        raise ValueError("Projector volume must be a whole number from 0 to 10")
 
 
 def validate_config(config):

@@ -42,8 +42,9 @@ class FakeRenderer:
     def __init__(self):
         self.layers = []
 
-    def render(self, layers):
+    def render(self, layers, dim=1.0):
         self.layers = layers
+        self.dim = dim
 
 
 @pytest.fixture
@@ -124,3 +125,23 @@ def test_apply_config_removes_frames_and_recreates_on_failed_update(playback):
     ]})
     assert text.closed and cast.closed
     assert playback.frames['cc'].base_source is FakeSource.instances[-1]
+
+
+def test_software_dim_follows_schedule(monkeypatch):
+    import src.projector.brightness as brightness
+    monkeypatch.setattr(brightness, 'phase_at', lambda *a, **k: 'night')
+    FakeSource.instances = []
+    monkeypatch.setattr(playback_module, 'create_source', lambda cfg, ctx=None: FakeSource(cfg))
+    config = {'canvas': {'width': 100, 'height': 100}, 'frames': [],
+              'location': {'lat': 45.6, 'lon': -123.2, 'timezone': 'America/Los_Angeles'},
+              'projector': {'serial': 'x', 'brightness': {'software_dim': {'night': 0.75}}}}
+    p = Playback(config, FakeRenderer())
+    p.start()
+    import time as _time
+    for _ in range(50):
+        if p.dim != 1.0:
+            break
+        _time.sleep(0.02)
+    p.tick(0.0)
+    assert p.renderer.dim == 0.75
+    p.close()

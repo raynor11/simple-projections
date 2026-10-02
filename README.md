@@ -189,14 +189,15 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 
 ## Projector control
 
-The `projector` section of the config:
+The RS-232 commands come from the LS740-4K user guide's command table (pp. 57–69). The `projector` section of the config:
 
 | Key | Meaning |
 |---|---|
-| `serial`, `baud` | The RS-232 adapter's port and speed (ViewSonic's default is 19200) |
-| `light_source_opcode` | The two command bytes for light source mode. Defaults to `[17, 16]` (0x11 0x10), as on ViewSonic's 4K PX7xx series. ViewSonic's generic document uses `[17, 12]` instead. |
-| `light_source_modes` | Mode name → value. Defaults: `normal` 0, `eco` 1, `dynamic_eco` 2, `supereco` 3. |
-| `brightness` | The light source mode for `day`, `dusk` and `night`, plus `twilight_offset_min` (default 30) |
+| `serial`, `baud` | The RS-232 adapter's port and speed. The LS740-4K defaults to **115200** (8N1); its menu also offers 9600. |
+| `input` | The input the Pi is plugged into: `hdmi1` (default) or `hdmi2`. Selected at every power-on. |
+| `aspect` | Set at every power-on: `16:9` (default), `auto`, `native`, `4:3` or `21:9` |
+| `volume` | Optional speaker volume, 0–10, set at every power-on (cast audio plays through the projector) |
+| `brightness` | The light source mode for `day`, `dusk` and `night`: `normal`, `eco` (about 20% dimmer) or `dynamic_black` (adapts to content). Also `twilight_offset_min` (default 30) and `software_dim` (below). |
 | `power_loss_debounce_s` | How long power must stay off before shutting down (default 10) |
 | `projector_off_timeout_s` | Shut down anyway if the projector hasn't reported off by then (default 90) |
 | `ups` | NUT's name for the UPS (default `apc@localhost`) |
@@ -204,18 +205,48 @@ The `projector` section of the config:
 
 "Dusk" covers civil twilight. It also includes the last `twilight_offset_min` of daylight before sunset and the first after sunrise.
 
-**Check the commands against the LS740-4K before relying on them.** The light-source opcode differs between ViewSonic models; confirm it against the LS740-4K's RS-232 table. Test each command with the service stopped:
+**Dimming at night:** over RS-232 the LS740-4K only switches between Normal and Eco. Its finer *Light Source Power 50–100%* setting exists only in the on-screen menu. To dim further at night, add `"software_dim": {"day": 1.0, "dusk": 0.9, "night": 0.75}` to `brightness`; the display scales its own output by that factor.
+
+**At power-on**, projector-control waits for the projector to finish warming up (it ignores most commands until then). It then selects the input, sets the aspect ratio and volume, and applies the brightness mode. It also logs the light-source hours once a day.
+
+Test the commands with the service stopped:
 
 ```bash
 sudo systemctl stop projector-control
 .venv/bin/python projector_control.py --test status
-.venv/bin/python projector_control.py --test light-source          # read the current mode
+.venv/bin/python projector_control.py --test on                    # then status: warming, then on
+.venv/bin/python projector_control.py --test light-source          # read: normal / eco / dynamic_black / custom_power
 .venv/bin/python projector_control.py --test light-source eco      # set a mode
+.venv/bin/python projector_control.py --test input hdmi1
+.venv/bin/python projector_control.py --test aspect 16:9
+.venv/bin/python projector_control.py --test volume 5
+.venv/bin/python projector_control.py --test blank on              # AV mute (and blank off)
+.venv/bin/python projector_control.py --test hours
 .venv/bin/python projector_control.py --test off
-.venv/bin/python projector_control.py --test on
 .venv/bin/python projector_control.py --test raw "07 14 00 05 00 34 00 00 11 00 5E"
 .venv/bin/python projector_control.py --test ups
 ```
+
+`custom_power` means the mode was set to a Light Source Power percentage in the menu. A warning about a reply checksum mismatch is harmless: the manual's own example reply for Normal mode has one.
+
+## Projector setup (LS740-4K menu)
+
+Set these once on the projector itself (Menu button). They keep the projector's own processing out of the way of our warping, and leave power and input to the Pi.
+
+| Menu | Setting | Why |
+|---|---|---|
+| Display → **Ultra Fast Input** | **Active** | Resets and disables the projector's Keystone, Four Corners, Warping, Aspect, Zoom and Image Shift, so only our warp applies. Also lowest input lag (4.2 ms). |
+| Display → Image Settings → Color Settings → **Color Space** | Auto, then check | The Pi's 1080p60 is a TV timing that may be sent as limited range. If black looks grey, choose RGB (16–235); if dark detail is crushed, RGB (0–255). |
+| Setup → Power Settings → **Direct Power On** / **Signal Power On** | **Off** / **Off** | The Pi turns the projector on over RS-232 |
+| Setup → Power Settings → **Auto Power Off** | **0** (disabled) | A dark screen or a Pi restart shouldn't turn it off |
+| Setup → Power Settings → **Power Mode (Standby)** | Eco; ErP Off if needed | If the projector doesn't respond to `--test on` from standby in Eco, use ErP Off |
+| Setup → **HDMI CEC** | **Off** | Avoids CEC fighting the RS-232 control |
+| Setup → Options → **Auto Source** | **Off** | The Pi selects the input |
+| Setup → Options → **Splash Screen** | **Neutral** | Black instead of a logo at power-on |
+| Setup → Options → **Baud Rate** | **115200** | Matches `baud` |
+| Setup → **Projection** | DeskFront or CeilingFront | Matches how it's mounted |
+
+**Placement:** a 100" 16:9 screen needs 122–195 in of throw (UG p.18), so 13 ft (156 in) works. Use the zoom ring so the image just overfills the screen onto its black border on every side. Screen detection needs the border lit, and nearly all of the Pi's output pixels then land on the screen. Focus on a test pattern.
 
 ### Power loss sequence
 
@@ -229,12 +260,9 @@ If power returns during steps 1–2, the projector is turned back on and nothing
 
 ## Hardware notes
 
-- **UPS load:** the BE600M1 is rated for 330 W. Check the projector's rated power draw: if the projector plus the Pi exceed about 330 W, the UPS will overload the moment it switches to battery. Plug both into the **battery-backed** outlets, not the surge-only ones. The Pi's own power supply must be on the UPS too; the USB cable is only for data.
-- **Projector settings:**
-  - Enable RS-232 control in standby (the projector's standby/power settings), or the power-on command at boot is ignored.
-  - Leave "Direct Power On" off, so the Pi decides when the projector turns on.
-  - Set the projector's baud rate to match `baud`.
-- **RS-232:** the Pi has no serial port, so use a USB-to-RS232 adapter (FTDI-based). Use a straight-through or null-modem cable according to the projector's port pinout.
+- **UPS load:** the LS740-4K draws 165–210 W and the Pi under 10 W, comfortably within the BE600M1's 330 W. Plug both into the **battery-backed** outlets, not the surge-only ones. The Pi's own power supply must be on the UPS too; the USB cable is only for data.
+- **Projector settings:** see [Projector setup](#projector-setup-ls740-4k-menu).
+- **RS-232:** the Pi has no serial port, so use a USB-to-RS232 adapter (FTDI-based) with a DB-9 male plug. The projector's port is DB-9 female with RX on pin 2, TX on pin 3 and ground on pin 5 (UG p.57), so a standard **straight-through** cable is correct (not null-modem).
 - **Capture card:**
   - 720p MJPEG is recommended on a Pi 4.
   - Put the capture card and the webcam on separate USB 3 ports.
@@ -247,7 +275,7 @@ If power returns during steps 1–2, the projector is turned back on and nothing
 These parts can't be tested off the hardware:
 - [ ] The GL context comes up under kmsdrm. The service sets `MESA_GL_VERSION_OVERRIDE=3.3`; the renderer also falls back to GL 3.1.
 - [ ] UxPlay accepts the multi-element `-vs` pipeline in `scripts/uxplay.service`, and frames appear on `/dev/video10`. If not, change `-vs` to just `v4l2sink device=/dev/video10`: portrait phones will then change the stream size, which v4l2loopback may not handle.
-- [ ] The projector commands work with `projector_control.py --test`, including the light-source opcode.
+- [ ] The projector commands work with `projector_control.py --test` at 115200 baud, including power-on from standby (note which Power Mode setting it needs).
 - [ ] The UPS power cycle works:
   - `upscmd -l apc@localhost` lists `shutdown.return`;
   - the full power-loss sequence runs;
