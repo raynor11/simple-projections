@@ -145,3 +145,31 @@ def test_software_dim_follows_schedule(monkeypatch):
     p.tick(0.0)
     assert p.renderer.dim == 0.75
     p.close()
+
+
+def test_skips_rendering_when_nothing_changed(playback):
+    calls = []
+    original = playback.renderer.render
+    playback.renderer.render = lambda layers, dim=1.0: (calls.append(1), original(layers, dim))
+    assert playback.tick(0.0) is True
+    assert playback.tick(0.1) is False                    # same picture: no render, no flip
+    assert playback.tick(0.2) is False
+    FakeSource.instances[1]._publish(FakeSource.instances[1].latest()[1])   # a new frame from a source
+    assert playback.tick(0.3) is True
+    assert playback.tick(0.4) is False
+    assert playback.tick(2.5) is True                     # periodic safety redraw
+    assert len(calls) == 3
+
+
+def test_animation_frames_always_render(playback):
+    playback.tick(0.0)
+    FakeSource.instances[0].is_active = True              # cast starts: fades in over 0.25s
+    rendered = [playback.tick(0.6 + i * 0.04) for i in range(4)]
+    assert all(rendered)
+
+
+def test_render_rate_capped(playback):
+    playback.tick(0.0)
+    FakeSource.instances[1]._publish(FakeSource.instances[1].latest()[1])
+    assert playback.tick(0.01) is False                   # changed, but within 1/30 s of the last frame
+    assert playback.tick(0.034) is True                   # picked up on the next tick

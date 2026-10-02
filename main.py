@@ -253,7 +253,7 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
                 print(line)
                 if overlay_source:
                     overlay_source.update(dict(overlay_source.cfg, text=line.replace(" | ", "\n")))
-            clock.tick(30)
+            clock.tick(60)   # poll often; Playback renders only on change, at most 30 fps
 
     finally:
         if playback:

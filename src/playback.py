@@ -14,6 +14,9 @@ from .sources import create_source, source_config
 
 
 DIM_CHECK_SECONDS = 60
+RULES_SECONDS = 0.5          # rule state only changes on cast start/stop or at time boundaries
+FORCE_REDRAW_SECONDS = 2.0   # redraw now and then even if nothing changed, as a safety net
+MAX_FPS = 30                 # the loop polls faster (to catch new frames promptly) but renders at most this often
 FADE_SECONDS = 0.25
 SLIDE_SECONDS = 0.25
 
@@ -65,6 +68,8 @@ class FrameState:
         self.override_source = None
         self.override_key = None
         self.alpha = 0.0
+        self.effective_cfg = None    # cfg with matching rules applied (re-evaluated twice a second)
+        self.corners_key = None      # what the current target corners were computed from
         self.corners = None          # currently displayed corners (4x2 array)
         self.target = None           # corners we're sliding toward
         self.slide_from = None
@@ -118,6 +123,10 @@ class Playback:
         self.clock = clock
         self.frames = {}   # id -> FrameState, in config order
         self._last_tick = None
+        self._S = None                 # cached screen homography
+        self._rules_at = None          # when rules were last evaluated
+        self._last_signature = None    # what the last rendered frame showed
+        self._last_render = None
         self.dim = 1.0
         self._dim_stop = threading.Event()
 
@@ -174,6 +183,12 @@ class Playback:
             state.close()
         self.frames.clear()
 
+    def invalidate(self):
+        """Drop cached geometry and rule results (after a config change)."""
+        self._S = None
+        self._rules_at = None
+        self._last_signature = None
+
     def apply_config(self, new_config):
         """
         Switch to an edited config without restarting: frames are matched by
@@ -183,6 +198,7 @@ class Playback:
         """
         location_changed = new_config.get('location') != self.config.get('location')
         self.config = new_config
+        self.invalidate()
         old_frames, self.frames = self.frames, {}
         for frame_cfg in new_config.get('frames', []):
             frame_id = frame_cfg['id']
@@ -211,6 +227,11 @@ class Playback:
     # -- per tick ------------------------------------------------------------
 
     def screen_matrix(self):
+        if self._S is None:
+            self._S = self._compute_screen_matrix()
+        return self._S
+
+    def _compute_screen_matrix(self):
         return screen_homography(screen_corners(self.config))
 
     def frame_corners(self, cfg, source, S):
@@ -236,7 +257,10 @@ class Playback:
         return state.override_source
 
     def tick(self, now=None, overlay=()):
-        """Advance animations and draw a frame. `overlay` layers are drawn on top (e.g. stats). Returns True if it rendered."""
+        """
+        Advance animations and draw a frame if anything visible changed.
+        `overlay` layers are drawn on top (e.g. stats). Returns True if it rendered.
+        """
         now = time.monotonic() if now is None else now
         dt = 0.0 if self._last_tick is None else min(0.25, now - self._last_tick)
         first_tick = self._last_tick is None
@@ -245,25 +269,55 @@ class Playback:
         for state in self.frames.values():
             if state.base_source:
                 state.base_source.poll(now)
-        active = self.active_ids()
-        wall_clock = self.clock()
+        if self._rules_at is None or now - self._rules_at >= RULES_SECONDS:
+            self._evaluate_rules(now)
 
         S = self.screen_matrix()
         layers = []
         for frame_id, state in self.frames.items():
-            cfg, _ = effective_frame(state.cfg, active, wall_clock)
+            cfg = state.effective_cfg
             source = self._shown_source(state, cfg)
             if source is None:
                 continue
             show = source.visible and not cfg.get('hidden', False)
             if first_tick and show:
                 state.alpha = 1.0   # frames showing at startup appear immediately
-            state.set_target(self.frame_corners(cfg, source, S), now, animate=state.alpha > 0)
+            corners_key = (id(cfg), source.orientation, id(S))
+            if corners_key != state.corners_key:
+                state.corners_key = corners_key
+                state.set_target(self.frame_corners(cfg, source, S), now, animate=state.alpha > 0)
             state.step(now, dt, show)
             if state.alpha <= 0.0:
                 continue
             layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(state.corners),
                                 source=source, alpha=state.alpha, crop=source.crop))
         layers.extend(overlay)
+
+        signature = self._signature(layers)
+        stale = self._last_render is None or now - self._last_render >= FORCE_REDRAW_SECONDS
+        if signature == self._last_signature and not stale:
+            return False
+        if self._last_render is not None and now - self._last_render < 1.0 / MAX_FPS - 0.004:
+            return False    # changed, but too soon: picked up on a following tick
         self.renderer.render(layers, dim=self.dim)
+        self._last_signature, self._last_render = signature, now
         return True
+
+    def _evaluate_rules(self, now):
+        active = self.active_ids()
+        wall_clock = self.clock()
+        for state in self.frames.values():
+            cfg, _ = effective_frame(state.cfg, active, wall_clock)
+            # Keep the same object while the result is unchanged, so cached corners stay valid.
+            if state.effective_cfg is None or cfg != state.effective_cfg:
+                state.effective_cfg = cfg
+        self._rules_at = now
+
+    def _signature(self, layers):
+        """Everything that affects the picture; if it's unchanged, the last frame is still correct."""
+        parts = [round(self.dim, 3)]
+        for layer in layers:
+            data = layer.source.latest()
+            parts.append((layer.key, data[0] if data else None, round(layer.alpha, 3), tuple(layer.crop),
+                          tuple(tuple(round(v, 2) for v in layer.corners[k]) for k in ('tl', 'tr', 'br', 'bl'))))
+        return tuple(parts)

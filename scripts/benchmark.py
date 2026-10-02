@@ -71,7 +71,7 @@ def run(name, seconds, media, width, height, fullscreen):
             if now - start < warmup:
                 playback.tick()
                 stats = Stats(interval=seconds)       # discard warm-up (decoder start, first fetches)
-                clock.tick(30)
+                clock.tick(60)   # poll often; Playback renders only on change, at most 30 fps
                 continue
             t = time.perf_counter()
             rendered = playback.tick()
@@ -81,7 +81,7 @@ def run(name, seconds, media, width, height, fullscreen):
             summary = stats.maybe_report()
             if summary:
                 return summary
-            clock.tick(30)
+            clock.tick(60)   # poll often; Playback renders only on change, at most 30 fps
     finally:
         playback.close()
         renderer.close()
