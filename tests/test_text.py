@@ -56,3 +56,11 @@ def test_text_source_renders_at_target_size_and_rerenders_on_change():
     assert src.latest()[0] == version        # unchanged -> same version
     src.update({'type': 'text', 'text': 'Changed'})
     assert src.latest()[0] != version
+
+
+def test_font_cache_is_bounded():
+    fonts = FontCache()
+    for size in range(10, 80):
+        fonts.get(size)
+    assert len(fonts._fonts) == FontCache.MAX_FONTS
+    assert 79 in fonts._fonts and 10 not in fonts._fonts

@@ -24,15 +24,76 @@ def parse_ups_status(text):
     return set(text.split())
 
 
+class NutClient:
+    """
+    A persistent connection to NUT's upsd (its plain-text protocol on TCP
+    3493), so polling the UPS every 2 s doesn't start a `upsc` process each
+    time. Reconnects on the next call after any error.
+    """
+
+    def __init__(self, host='localhost', port=3493, timeout=3.0):
+        self.host, self.port, self.timeout = host, port, timeout
+        self._sock = None
+        self._buffer = b''
+
+    def _connect(self):
+        import socket
+        self._sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
+        self._buffer = b''
+
+    def _readline(self):
+        while b'\n' not in self._buffer:
+            chunk = self._sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("upsd closed the connection")
+            self._buffer += chunk
+        line, self._buffer = self._buffer.split(b'\n', 1)
+        return line.decode(errors='replace').strip()
+
+    def get_var(self, ups, var):
+        """A variable's value, e.g. get_var('apc', 'ups.status') -> 'OL CHRG'. Raises on failure."""
+        try:
+            if self._sock is None:
+                self._connect()
+            self._sock.sendall(f"GET VAR {ups} {var}\n".encode())
+            line = self._readline()
+        except OSError:
+            self.close()
+            raise
+        prefix = f"VAR {ups} {var} "
+        if not line.startswith(prefix):
+            raise ValueError(f"upsd: {line}")
+        return line[len(prefix):].strip().strip('"')
+
+    def close(self):
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+        self._sock = None
+
+
+_clients = {}
+
+
+def parse_ups_name(ups):
+    """'apc@localhost:3493' -> ('apc', 'localhost', 3493)."""
+    name, _, host = ups.partition('@')
+    host, _, port = (host or 'localhost').partition(':')
+    return name, host, int(port or 3493)
+
+
 def read_ups_status(ups='apc@localhost'):
     """The UPS's status flags, or None if NUT can't be reached."""
+    name, host, port = parse_ups_name(ups)
+    client = _clients.get((host, port))
+    if client is None:
+        client = _clients[(host, port)] = NutClient(host, port)
     try:
-        out = subprocess.run(['upsc', ups, 'ups.status'], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
+        return parse_ups_status(client.get_var(name, 'ups.status'))
+    except (OSError, ValueError):
         return None
-    if out.returncode != 0:
-        return None
-    return parse_ups_status(out.stdout)
 
 
 def on_battery(flags):

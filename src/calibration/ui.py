@@ -91,6 +91,8 @@ class CalibrationUI:
         self._message_until = 0.0
         self._quit_armed_until = 0.0
         self._cursor = None
+        self.dirty = True               # something changed since the last render_grid()
+        self._message_drawn = False     # the on-screen message is up (redraw once it expires)
         self._window = None
         self._scale = (1.0, 1.0)
         self._top = 0                   # toolbar bottom, window px
@@ -195,6 +197,7 @@ class CalibrationUI:
     def _say(self, text):
         print(text)
         self._message, self._message_until = text, time.monotonic() + MESSAGE_SECONDS
+        self.dirty = True
 
     def undo(self):
         previous = self.history.undo(self.config)
@@ -292,7 +295,17 @@ class CalibrationUI:
             w.Button('quit', 'Quit', 'Q'),
         ]
 
+    def needs_redraw(self, window=None):
+        """Whether the screen is out of date: input changed something, a message expired, or the window resized."""
+        if self.dirty:
+            return True
+        if window is not None and self._window is not None and window.get_size() != self._window.get_size():
+            return True
+        return self._message_drawn and time.monotonic() >= self._message_until
+
     def render_grid(self, window):
+        self.dirty = False
+        self._message_drawn = bool(self._message) and time.monotonic() < self._message_until
         self._window = window
         win_w, win_h = window.get_size()
         self._scale = (win_w / self.canvas_width, win_h / self.canvas_height)
@@ -444,6 +457,10 @@ class CalibrationUI:
             self.handle_event(event)
 
     def handle_event(self, event):
+        # Pointer movement only matters if it changes the hover or a drag;
+        # everything else (keys, clicks, resizes, focus) redraws.
+        if event.type != pygame.MOUSEMOTION or self.drag:
+            self.dirty = True
         if event.type == pygame.QUIT:
             self._request_quit()
         elif event.type == pygame.KEYDOWN:
@@ -483,7 +500,10 @@ class CalibrationUI:
         return None
 
     def _update_hover(self, pos):
-        self.hover = self._hit(pos)
+        hover = self._hit(pos)
+        if hover != self.hover:
+            self.dirty = True
+        self.hover = hover
         kind = self.hover[0] if self.hover else None
         if kind == 'handle':
             cursor = 'move' if self._numbered_handles() else self.hover[1]
@@ -629,6 +649,7 @@ class CalibrationUI:
         handler()
 
     def handle_key(self, key, mod=0):
+        self.dirty = True
         shift = bool(mod & pygame.KMOD_SHIFT)
         command = bool(mod & (pygame.KMOD_CTRL | pygame.KMOD_META))
         resize = bool(mod & (pygame.KMOD_CTRL | pygame.KMOD_ALT | pygame.KMOD_META))

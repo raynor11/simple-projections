@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 import pygame
 
@@ -26,9 +28,17 @@ def parse_color(value, default):
 
 
 class FontCache:
+    """
+    Fonts by size, keeping the most recently used. Auto-fitting tries many
+    sizes, so the cache is bounded rather than growing for as long as the
+    app runs.
+    """
+
+    MAX_FONTS = 24
+
     def __init__(self, path=None):
         self.path = path
-        self._fonts = {}
+        self._fonts = OrderedDict()
 
     def get(self, size):
         size = max(1, int(size))
@@ -37,6 +47,10 @@ class FontCache:
             if not pygame.font.get_init():
                 pygame.font.init()
             font = self._fonts[size] = pygame.font.Font(self.path, size)
+            while len(self._fonts) > self.MAX_FONTS:
+                self._fonts.popitem(last=False)
+        else:
+            self._fonts.move_to_end(size)
         return font
 
 

@@ -267,3 +267,19 @@ def test_playback_draws_quad_through_screen():
     quad = {'tl': [0.1, 0.1], 'tr': [0.5, 0.2], 'br': [0.5, 0.5], 'bl': [0.1, 0.4]}
     corners = frame_canvas_corners({'quad': quad}, S)
     assert np.allclose(corners['tr'], [500, 100]) and np.allclose(corners['bl'], [100, 200])
+
+
+def test_redraws_only_when_something_changed(ui):
+    ready(ui)
+    assert not ui.needs_redraw()
+    mouse(ui, pygame.MOUSEMOTION, (5, 1070))              # empty area, inside the help panel: no hover change
+    assert not ui.needs_redraw()
+    mouse(ui, pygame.MOUSEMOTION, px(0.25, 0.25))         # now over a frame: hover changed
+    assert ui.needs_redraw()
+    ready(ui)
+    ui.handle_key(pygame.K_RIGHT)
+    assert ui.needs_redraw()
+    ready(ui)
+    ui._message_until = 0                                 # the message ("...") timed out
+    ui._message_drawn = True
+    assert ui.needs_redraw()

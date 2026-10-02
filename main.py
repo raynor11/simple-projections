@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import gc
 import itertools
 import time
 
@@ -124,8 +125,10 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
     while ui.running:
         ui.handle_events()
         # get_surface(): the window may have been resized.
-        ui.render_grid(pygame.display.get_surface() or screen)
-        pygame.display.flip()
+        surface = pygame.display.get_surface() or screen
+        if ui.needs_redraw(surface):        # only after input, hover changes or a message timing out
+            ui.render_grid(surface)
+            pygame.display.flip()
         clock.tick(60)
 
     if ui.modified:
@@ -216,6 +219,12 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
         renderer.init_gl()
         playback = Playback(config, renderer)
         playback.start()
+        # Long-lived objects (config, sources, GL wrappers) exist now: stop the
+        # garbage collector rescanning them, and collect less often -- a
+        # long-running display allocates little per frame.
+        gc.collect()
+        gc.freeze()
+        gc.set_threshold(50_000, 50, 100)
 
         print("Playback Mode - Press Esc to quit")
 

@@ -80,10 +80,9 @@ def polyline(surface, points, color, width, closed=True, dashed=False, dash=10, 
 
 
 def fill_polygon(surface, points, rgba):
-    """Translucent polygon fill."""
-    layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-    pygame.draw.polygon(layer, rgba, [tuple(p) for p in points])
-    surface.blit(layer, (0, 0))
+    """Translucent polygon fill (blended in place, without allocating a full-window layer)."""
+    import pygame.gfxdraw
+    pygame.gfxdraw.filled_polygon(surface, [(int(round(x)), int(round(y))) for x, y in points], rgba)
 
 
 def corner_handle(surface, pos, number, font, radius, active=False):

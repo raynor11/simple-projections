@@ -63,3 +63,46 @@ def test_parse_ups_status():
     assert on_battery(parse_ups_status("OB DISCHRG\n")) is True
     assert on_battery(parse_ups_status("OL CHRG")) is False
     assert on_battery(None) is None
+
+
+def test_nut_client_against_fake_upsd():
+    import socket
+    import threading
+    from src.projector.power import NutClient, parse_ups_name, read_ups_status, _clients
+
+    server = socket.socket()
+    server.bind(('127.0.0.1', 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    connections = []
+
+    def serve():
+        conn, _ = server.accept()
+        connections.append(conn)
+        buf = b''
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                return
+            buf += data
+            while b'\n' in buf:
+                line, buf = buf.split(b'\n', 1)
+                parts = line.decode().split()
+                if parts[:2] == ['GET', 'VAR'] and parts[2] == 'apc':
+                    conn.sendall(f'VAR apc {parts[3]} "OB DISCHRG"\n'.encode())
+                else:
+                    conn.sendall(b'ERR UNKNOWN-UPS\n')
+
+    threading.Thread(target=serve, daemon=True).start()
+    assert parse_ups_name(f'apc@127.0.0.1:{port}') == ('apc', '127.0.0.1', port)
+    assert read_ups_status(f'apc@127.0.0.1:{port}') == {'OB', 'DISCHRG'}
+    assert read_ups_status(f'apc@127.0.0.1:{port}') == {'OB', 'DISCHRG'}
+    assert len(connections) == 1                               # one persistent connection
+    assert read_ups_status(f'other@127.0.0.1:{port}') is None   # ERR -> unknown
+    _clients.clear()
+    server.close()
+
+
+def test_unreachable_upsd_is_unknown():
+    from src.projector.power import read_ups_status
+    assert read_ups_status('apc@127.0.0.1:1') is None
