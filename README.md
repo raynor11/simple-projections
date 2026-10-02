@@ -123,6 +123,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | `s` / `l` | Save / reload the config |
 | `+` / `-` | Bigger / smaller interface text |
 | `h` | Hide / show the help panel |
+| `t` | Test pattern: near-black and near-white steps, for checking the projector's color range |
 | `Esc` / `q` | Quit. With unsaved changes you're asked to press it again (or `s` to save). |
 
 **Accessibility**
@@ -240,7 +241,7 @@ Set these once on the projector itself (Menu button). They keep the projector's 
 | Menu | Setting | Why |
 |---|---|---|
 | Display → **Ultra Fast Input** | **Active** | Resets and disables the projector's Keystone, Four Corners, Warping, Aspect, Zoom and Image Shift, so only our warp applies. Also lowest input lag (4.2 ms). |
-| Display → Image Settings → Color Settings → **Color Space** | Auto, then check | The Pi's 1080p60 is a TV timing that may be sent as limited range. If black looks grey, choose RGB (16–235); if dark detail is crushed, RGB (0–255). |
+| Display → Image Settings → Color Settings → **Color Space** | Auto, then check | The Pi's 1080p60 is a TV timing that may be sent as limited range. Check it with the test pattern (`--calibrate`, press **T**): every near-black and near-white step should be distinct and 0 should be true black. If black looks grey, choose RGB (16–235); if dark steps merge, RGB (0–255). |
 | Setup → Power Settings → **Direct Power On** / **Signal Power On** | **Off** / **Off** | The Pi turns the projector on over RS-232 |
 | Setup → Power Settings → **Auto Power Off** | **0** (disabled) | A dark screen or a Pi restart shouldn't turn it off |
 | Setup → Power Settings → **Power Mode (Standby)** | Eco; ErP Off if needed | If the projector doesn't respond to `--test on` from standby in Eco, use ErP Off |

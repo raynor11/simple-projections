@@ -283,3 +283,14 @@ def test_redraws_only_when_something_changed(ui):
     ui._message_until = 0                                 # the message ("...") timed out
     ui._message_drawn = True
     assert ui.needs_redraw()
+
+
+def test_test_pattern_toggle(ui):
+    ready(ui)
+    ui.handle_key(pygame.K_t)
+    surface = pygame.Surface((1920, 1080))
+    ui.render_grid(surface)
+    assert ui.test_pattern
+    assert surface.get_at((5, ui._top + 30))[:3] == (0, 0, 0)       # the first near-black step is true black
+    ui.handle_key(pygame.K_t)
+    assert not ui.test_pattern

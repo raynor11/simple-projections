@@ -43,7 +43,7 @@ HELP = [
     "Mouse: " + ", ".join(MOUSE_HINTS).lower().capitalize(),
     "Keys: " + "   ".join(KEY_HINTS),
     "Toolbar buttons show their shortcut keys (S save, Ctrl+Z undo, N new, D delete, W warp corners, "
-    "E screen corners, P portrait, R preview, A auto-detect, +/- text size, H help, Q quit)",
+    "E screen corners, P portrait, R preview, A auto-detect, T test pattern, +/- text size, H help, Q quit)",
 ]
 
 CURSORS = {
@@ -78,6 +78,7 @@ class CalibrationUI:
         self.portrait = False
         self.preview = 'idle'
         self.show_help = True
+        self.test_pattern = False
         self.ui_scale = 1.0
         self.running = True
         self.modified = False
@@ -291,6 +292,7 @@ class CalibrationUI:
             w.Button('detect', 'Auto-detect screen', 'A', enabled=self.detect is not None),
             w.Button('smaller', 'Smaller text', '-'),
             w.Button('bigger', 'Bigger text', '+'),
+            w.Button('pattern', 'Test pattern', 'T', on=self.test_pattern),
             w.Button('help', 'Help', 'H', on=self.show_help),
             w.Button('quit', 'Quit', 'Q'),
         ]
@@ -318,6 +320,12 @@ class CalibrationUI:
         self._top = w.layout_buttons(self.buttons, font, win_w, gap, gap)
         panel_lines = self._panel_lines(font, win_w - 2 * gap)
         self._bottom = win_h - (len(panel_lines) * font.get_linesize() + 2 * gap)
+
+        if self.test_pattern:
+            self._draw_test_pattern(window, font)
+            self._draw_toolbar(window, font)
+            self._draw_panel(window, font, panel_lines, gap)
+            return
 
         window.fill(w.BACKGROUND)
         pygame.draw.line(window, w.GRID, (0, win_h // 2), (win_w, win_h // 2), 1)
@@ -370,6 +378,26 @@ class CalibrationUI:
         self._draw_toolbar(window, font)
         self._draw_panel(window, font, panel_lines, gap)
         self._draw_handles(window, base)   # last, so panels never hide them
+
+    def _draw_test_pattern(self, window, font):
+        """
+        Near-black and near-white steps for checking the HDMI range: with
+        the projector's Color Space right, every step is visible and 0 is
+        true black.
+        """
+        win_w, _ = window.get_size()
+        window.fill((0, 0, 0))
+        rows = [list(range(0, 64, 4)), list(range(192, 256, 4))]
+        top = self._top + 20
+        height = max(40, (self._bottom - top - 40) // 2)
+        width = win_w / len(rows[0])
+        for r, values in enumerate(rows):
+            y = top + r * (height + 20)
+            for i, v in enumerate(values):
+                rect = pygame.Rect(int(i * width), y, int(width) + 1, height)
+                pygame.draw.rect(window, (v, v, v), rect)
+                label = font.render(str(v), True, (255, 255, 255) if v < 128 else (0, 0, 0))
+                window.blit(label, label.get_rect(midbottom=(rect.centerx, rect.bottom - 6)))
 
     @staticmethod
     def _label(window, font, text, pos, color, placed, pad=4):
@@ -643,7 +671,7 @@ class CalibrationUI:
             'add': self._add_frame, 'delete': self._delete_frame, 'screen': self._toggle_screen_mode,
             'portrait': self._toggle_portrait, 'warp': self._toggle_warp, 'preview': self._next_preview, 'detect': self._auto_detect,
             'smaller': lambda: self._resize_ui(-1), 'bigger': lambda: self._resize_ui(1),
-            'help': self._toggle_help, 'quit': self._request_quit,
+            'help': self._toggle_help, 'quit': self._request_quit, 'pattern': self._toggle_pattern,
         }[action]
         self.history.end_group()
         handler()
@@ -675,6 +703,8 @@ class CalibrationUI:
             self._toggle_warp()
         elif key == pygame.K_h:
             self._toggle_help()
+        elif key == pygame.K_t:
+            self._toggle_pattern()
         elif key == pygame.K_r:
             self._next_preview()
         elif key == pygame.K_a:
@@ -732,6 +762,12 @@ class CalibrationUI:
         self.portrait = not self.portrait
         self._say("Editing the portrait layout (used when cast content is portrait)" if self.portrait
                   else "Editing the landscape layout")
+
+    def _toggle_pattern(self):
+        self.test_pattern = not self.test_pattern
+        if self.test_pattern:
+            self._say("Every step should be distinguishable. Grey 'black' or merged dark steps: "
+                      "change the projector's Color Space (see README).")
 
     def _toggle_help(self):
         self.show_help = not self.show_help
