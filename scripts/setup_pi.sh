@@ -8,6 +8,13 @@ set -e
 
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_USER="$(whoami)"
+BOOT=/boot/firmware
+
+if [ "$(uname -m)" != "aarch64" ] || [ "$(getconf LONG_BIT)" != "64" ]; then
+    echo "This needs Raspberry Pi OS Lite (64-bit). This system is $(uname -m), $(getconf LONG_BIT)-bit."
+    echo "Reflash the microSD card with Raspberry Pi Imager: Raspberry Pi OS (other) -> Raspberry Pi OS Lite (64-bit)."
+    exit 1
+fi
 
 echo "Installing system dependencies..."
 sudo apt-get update
@@ -34,7 +41,8 @@ sudo apt-get install -y \
     avahi-daemon \
     uxplay \
     v4l2loopback-dkms \
-    nut
+    nut \
+    zram-tools
 
 echo "Creating Python virtual environment..."
 python3 -m venv --system-site-packages .venv
@@ -48,11 +56,30 @@ echo "Adding $APP_USER to hardware access groups..."
 sudo usermod -aG video,render,input,audio,dialout "$APP_USER"
 
 echo "Forcing 1080p60 HDMI output..."
-# The projector upscales 1080p to 4K; rendering at 4K is too much for the Pi 4 GPU.
-CMDLINE=/boot/firmware/cmdline.txt
-if ! grep -q "video=HDMI-A-1:" "$CMDLINE"; then
-    sudo sed -i '1 s/$/ video=HDMI-A-1:1920x1080@60/' "$CMDLINE"
+# The projector scales 1080p up to 4K; rendering at 4K is 4x the work for the
+# Pi 4 GPU. The trailing D forces the output on even when no display answers:
+# the Pi boots while the projector is still in standby (projector-control
+# turns it on), and without it KMS may never light the HDMI output.
+CMDLINE=$BOOT/cmdline.txt
+sudo sed -i -E 's/ ?video=HDMI-A-1:[^ ]*//' "$CMDLINE"
+sudo sed -i '1 s/$/ video=HDMI-A-1:1920x1080@60D/' "$CMDLINE"
+
+echo "Trimming services this setup doesn't use..."
+CONFIG=$BOOT/config.txt
+grep -q "^dtoverlay=disable-bt" "$CONFIG" || echo "dtoverlay=disable-bt" | sudo tee -a "$CONFIG" > /dev/null
+grep -q "^disable_splash=1" "$CONFIG" || echo "disable_splash=1" | sudo tee -a "$CONFIG" > /dev/null
+for unit in hciuart bluetooth triggerhappy ModemManager; do
+    sudo systemctl disable --now "$unit" 2> /dev/null || true
+done
+
+echo "Swapping to compressed RAM instead of the SD card..."
+# zram swap is faster than SD-card swap and doesn't wear the card out.
+if systemctl list-unit-files dphys-swapfile.service > /dev/null 2>&1; then
+    sudo dphys-swapfile swapoff || true
+    sudo systemctl disable --now dphys-swapfile || true
 fi
+printf 'ALGO=zstd\nPERCENT=25\n' | sudo tee /etc/default/zramswap > /dev/null
+sudo systemctl enable --now zramswap || true
 
 echo "Configuring the AirPlay video loopback device and HDMI audio..."
 sudo cp scripts/system/v4l2loopback.conf /etc/modprobe.d/v4l2loopback.conf
@@ -85,6 +112,6 @@ install_service projector-control.service
 sudo systemctl daemon-reload
 sudo systemctl enable projection-mapper uxplay projector-control
 
-echo "Setup complete! Reboot to apply group membership and the HDMI mode."
+echo "Setup complete! Reboot to apply group membership, the HDMI mode and the boot settings."
 echo "To start the service: sudo systemctl start projection-mapper"
 echo "To view logs: journalctl -u projection-mapper -f"

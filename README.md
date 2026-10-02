@@ -35,8 +35,9 @@ Three systemd services:
 
 ### Raspberry Pi
 
-1. Flash **Raspberry Pi OS Lite (64-bit)** and enable SSH.
-2. Clone the repo and run the setup script as your normal user:
+1. **Flash Raspberry Pi OS Lite (64-bit)** with Raspberry Pi Imager: *Raspberry Pi OS (other) → Raspberry Pi OS Lite (64-bit)*. In Imager's settings, enable SSH and set your Wi-Fi, user and password. A card that came with 32-bit or desktop Pi OS must be reflashed; the setup script refuses to run on 32-bit.
+2. **Cooling:** fit the heatsinks and plug the case fan into the Pi's 5 V and ground pins, so it runs whenever the Pi is on. Sustained video decoding throttles a passively cooled Pi 4.
+3. Clone the repo and run the setup script as your normal user:
    ```bash
    git clone <repo> projection-mapper
    cd projection-mapper
@@ -46,10 +47,13 @@ Three systemd services:
    ```
 
 The setup script:
-- installs the packages;
-- sets HDMI to 1080p (the projector upscales to 4K; the Pi 4 can't render live frames at 4K);
+- installs the packages, including the hardware video decoding pieces;
+- forces the HDMI output to 1080p60, and keeps it on even while the projector is in standby at boot;
+- turns off Bluetooth, the boot splash and unused services, and swaps to compressed RAM (zram) instead of the SD card;
 - configures the AirPlay loopback device, HDMI audio and NUT for the UPS;
-- installs and enables the three services.
+- installs and enables the three services, with the display given CPU priority.
+
+The projector scales 1080p up to its 4K output. Rendering at 4K would be four times the work for the Pi 4. Once everything runs well at 1080p, you can try 4K at 30 Hz: change the `video=` entry in `/boot/firmware/cmdline.txt` to `3840x2160@30D`, set the config's `canvas` to 3840×2160, re-run screen detection, and compare `scripts/benchmark.py` results and temperatures. It only sharpens text and weather; video gains nothing.
 
 ### macOS (development)
 
