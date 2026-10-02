@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -87,6 +88,8 @@ class CanvasRenderer:
         self.program = None
         self.ebo = None
         self.layers = {}
+        # (upload ms, draw ms, bytes uploaded, textures uploaded, frames dropped) for the last render
+        self.last_render_stats = (0.0, 0.0, 0, 0, 0)
 
     def init_gl(self):
         """Initialize pygame and OpenGL context."""
@@ -163,13 +166,19 @@ class CanvasRenderer:
         self.program['canvas_size'].value = (float(self.canvas_width), float(self.canvas_height))
         self.program['texture0'].value = 0
 
+        start = time.perf_counter()
+        upload_s = 0.0
+        self._uploaded_bytes = self._uploads = self._dropped = 0
         drawn = set()
         for layer in layers:
             drawn.add(layer.key)
             gl = self.layers.get(layer.key)
             if gl is None:
                 gl = self.layers[layer.key] = _LayerGL(self.ctx, self.program, self.ebo)
-            if self._update_texture(gl, layer.source) and layer.alpha > 0.0:
+            t = time.perf_counter()
+            has_texture = self._update_texture(gl, layer.source)
+            upload_s += time.perf_counter() - t
+            if has_texture and layer.alpha > 0.0:
                 self._update_geometry(gl, layer.corners)
                 self._draw(gl, layer)
 
@@ -177,6 +186,9 @@ class CanvasRenderer:
             if key not in drawn:
                 self.layers.pop(key).release()
 
+        total_s = time.perf_counter() - start
+        self.last_render_stats = (upload_s * 1000, (total_s - upload_s) * 1000,
+                                  self._uploaded_bytes, self._uploads, self._dropped)
         pygame.display.flip()
 
     def _update_texture(self, gl, source):
@@ -187,8 +199,12 @@ class CanvasRenderer:
         version, img = data
         if version == gl.version:
             return True
+        if gl.version is not None and version > gl.version + 1:
+            self._dropped += version - gl.version - 1   # frames the source made that were never shown
         h, w = img.shape[:2]
         img = np.ascontiguousarray(img)
+        self._uploaded_bytes += img.nbytes
+        self._uploads += 1
         if gl.texture is None or gl.texture.size != (w, h):
             if gl.texture:
                 gl.texture.release()

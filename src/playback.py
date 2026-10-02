@@ -235,7 +235,8 @@ class Playback:
             state.override_source.poll(time.monotonic())
         return state.override_source
 
-    def tick(self, now=None):
+    def tick(self, now=None, overlay=()):
+        """Advance animations and draw a frame. `overlay` layers are drawn on top (e.g. stats). Returns True if it rendered."""
         now = time.monotonic() if now is None else now
         dt = 0.0 if self._last_tick is None else min(0.25, now - self._last_tick)
         first_tick = self._last_tick is None
@@ -263,4 +264,6 @@ class Playback:
                 continue
             layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(state.corners),
                                 source=source, alpha=state.alpha, crop=source.crop))
+        layers.extend(overlay)
         self.renderer.render(layers, dim=self.dim)
+        return True

@@ -14,14 +14,18 @@ from src.playback import Playback, full_canvas_corners
 from src.renderer import Layer
 from src.screen_detect import DetectionError, capture_and_detect, outline_pattern
 from src.sources.base import StaticSource
+from src.sources.text import TextSource
+from src.stats import Stats, format_summary
 
-FPS_LOG_SECONDS = 10
+STATS_SECONDS = 10
 
 
 def main():
     parser = argparse.ArgumentParser(description="Projection Mapper")
     parser.add_argument("--calibrate", action="store_true", help="Run in calibration mode")
     parser.add_argument("--play", action="store_true", help="Run in playback mode (default)")
+    parser.add_argument("--stats", action="store_true",
+                        help="Show performance stats on screen (they're always logged every 10s)")
     parser.add_argument("--detect-screen", action="store_true",
                         help="Find the projector screen with the camera and save its corners")
     parser.add_argument("--windowed", action="store_true", help="Run windowed (dev mode)")
@@ -79,7 +83,8 @@ def main():
     elif args.calibrate:
         run_calibration(config, canvas_width, canvas_height, fullscreen, display_index, args.config)
     else:
-        run_playback(config, canvas_width, canvas_height, fullscreen, display_index, args.config)
+        run_playback(config, canvas_width, canvas_height, fullscreen, display_index, args.config,
+                     show_stats=args.stats)
 
 
 def run_calibration(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None):
@@ -192,7 +197,17 @@ def run_detect_screen(config, canvas_width, canvas_height, fullscreen, display_i
         renderer.close()
 
 
-def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None):
+def stats_overlay(canvas_width, canvas_height):
+    """A text layer in the top-left corner for --stats."""
+    source = TextSource({'type': 'text', 'text': 'Collecting stats…', 'align': 'left',
+                         'color': '#ffffff', 'background': '#000000b0'})
+    w, h = canvas_width * 0.42, canvas_height * 0.16
+    corners = {'tl': [10, 10], 'tr': [10 + w, 10], 'br': [10 + w, 10 + h], 'bl': [10, 10 + h]}
+    return source, Layer('stats-overlay', corners, source)
+
+
+def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None,
+                 show_stats=False):
     """Run playback mode. Edits to the config file are picked up live."""
     renderer = CanvasRenderer(canvas_width, canvas_height, fullscreen=fullscreen, display_index=display_index)
     playback = None
@@ -206,9 +221,11 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
 
         watcher = ConfigWatcher(config_path) if config_path else None
         clock = pygame.time.Clock()
+        stats = Stats(STATS_SECONDS)
+        overlay_source, overlay = stats_overlay(canvas_width, canvas_height) if show_stats else (None, None)
+        if overlay_source:
+            overlay_source.set_target_size(*map(int, (canvas_width * 0.42, canvas_height * 0.16)))
         running = True
-        frames_drawn = 0
-        fps_window_start = time.monotonic()
 
         while running:
             for event in pygame.event.get():
@@ -225,15 +242,18 @@ def run_playback(config, canvas_width, canvas_height, fullscreen, display_index=
                         print("Canvas size changed; restart to apply it")
                     playback.apply_config(new_config)
 
-            playback.tick()
+            tick_start = time.perf_counter()
+            rendered = playback.tick(overlay=(overlay,) if overlay else ())
+            stats.record_tick((time.perf_counter() - tick_start) * 1000, rendered)
+            if rendered:
+                stats.record_render(*renderer.last_render_stats)
+            summary = stats.maybe_report()
+            if summary:
+                line = format_summary(summary)
+                print(line)
+                if overlay_source:
+                    overlay_source.update(dict(overlay_source.cfg, text=line.replace(" | ", "\n")))
             clock.tick(30)
-
-            frames_drawn += 1
-            elapsed = time.monotonic() - fps_window_start
-            if elapsed >= FPS_LOG_SECONDS:
-                print(f"FPS: {frames_drawn / elapsed:.1f}")
-                frames_drawn = 0
-                fps_window_start = time.monotonic()
 
     finally:
         if playback:
