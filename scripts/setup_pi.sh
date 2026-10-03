@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for Raspberry Pi 4 running Raspberry Pi OS Lite 64-bit (Bookworm).
+# Setup script for Raspberry Pi 4 running Raspberry Pi OS Lite 64-bit (Bookworm or Trixie).
 #
 # Run from the repo root as the user that will own the services (not root):
 #   ./scripts/setup_pi.sh
@@ -46,8 +46,7 @@ sudo apt-get install -y \
     avahi-daemon \
     uxplay \
     v4l2loopback-dkms \
-    nut \
-    zram-tools
+    nut
 
 echo "Creating Python virtual environment..."
 python3 -m venv --system-site-packages .venv
@@ -83,8 +82,15 @@ if systemctl list-unit-files dphys-swapfile.service > /dev/null 2>&1; then
     sudo dphys-swapfile swapoff || true
     sudo systemctl disable --now dphys-swapfile || true
 fi
-printf 'ALGO=zstd\nPERCENT=25\n' | sudo tee /etc/default/zramswap > /dev/null
-sudo systemctl enable --now zramswap || true
+if dpkg -s rpi-swap > /dev/null 2>&1; then
+    # Trixie's rpi-swap already sets up zram swap; zram-tools would only
+    # fail to grab the busy /dev/zram0.
+    echo "Raspberry Pi OS already swaps to zram (rpi-swap)."
+else
+    sudo apt-get install -y zram-tools
+    printf 'ALGO=zstd\nPERCENT=25\n' | sudo tee /etc/default/zramswap > /dev/null
+    sudo systemctl enable --now zramswap || true
+fi
 
 echo "Configuring the AirPlay video loopback device and HDMI audio..."
 sudo cp scripts/system/v4l2loopback.conf /etc/modprobe.d/v4l2loopback.conf

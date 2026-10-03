@@ -4,7 +4,7 @@ Projects a layout of live frames onto a projector screen from a Raspberry Pi 4. 
 
 Built for this setup:
 
-- Raspberry Pi 4B running Raspberry Pi OS Lite 64-bit (Bookworm)
+- Raspberry Pi 4B running Raspberry Pi OS Lite 64-bit (Bookworm or Trixie)
 - ViewSonic LS740-4K laser projector, about 13 ft back, projecting onto a 100" 16:9 screen (white, black border)
 - One USB webcam: finds the screen, and can also be shown as a frame
 - USB HDMI capture card with a Chromecast plugged into it
