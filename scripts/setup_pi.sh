@@ -22,7 +22,9 @@ sudo apt-get update
 sudo apt-get install -y linux-headers-rpi-v8 || sudo apt-get install -y raspberrypi-kernel-headers || true
 # opencv/pygame/numpy come from apt rather than pip: Debian's pygame links
 # the system SDL2, which is built with the kmsdrm backend we need to draw
-# straight to the display without a desktop session.
+# straight to the display without a desktop session. The X11/EGL/GL headers
+# are for pip building moderngl's glcontext, which has no aarch64 wheel for
+# every Python version (e.g. 3.13).
 sudo apt-get install -y \
     python3-pip \
     python3-venv \
@@ -31,6 +33,9 @@ sudo apt-get install -y \
     python3-pygame \
     python3-numpy \
     python3-serial \
+    libx11-dev \
+    libegl-dev \
+    libgl-dev \
     v4l-utils \
     alsa-utils \
     gstreamer1.0-tools \
