@@ -87,7 +87,7 @@ On a Mac, a camera `device` can be an index like `0`. Chromecast, AirPlay, audio
    sudo systemctl stop projection-mapper
    .venv/bin/python main.py --detect-screen
    ```
-   It projects white, black and a chessboard, then shows a green outline of the screen it found. If the outline sits on the inner edge of the black border, press **Enter** to save; press **Esc** to discard. The camera photos go to `captures/` if you need to troubleshoot.
+   It projects white, black and a chessboard, then shows a green outline of the screen it found. If the outline sits on the inner edge of the black border, press **Enter** to save; press **Esc** to discard. Without a keyboard on the Pi, type the answer in the terminal instead (Enter or `s` to save, `q` to discard). The camera photos go to `captures/` if you need to troubleshoot.
 4. **Lay out the frames** with `python main.py --calibrate` (controls below). Press `s` to save.
 5. Start everything again: `sudo systemctl start projection-mapper projector-control`.
 

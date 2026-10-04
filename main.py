@@ -2,6 +2,8 @@
 import argparse
 import gc
 import itertools
+import select
+import termios
 import time
 
 import pygame
@@ -148,6 +150,25 @@ def detection_camera(config):
     return None, None
 
 
+def terminal_choice():
+    """
+    A save/discard answer typed in the terminal (e.g. over SSH, with no
+    keyboard on the Pi): 'save', 'discard', or None if nothing was typed.
+    """
+    if not sys.stdin or not sys.stdin.isatty():
+        return None
+    ready, _, _ = select.select([sys.stdin], [], [], 0)
+    if not ready:
+        return None
+    answer = sys.stdin.readline().strip().lower()
+    if answer in ('', 's', 'y', 'yes', 'save'):
+        return 'save'
+    if answer in ('q', 'n', 'no', 'esc', 'discard'):
+        return 'discard'
+    print("Type s (or just Enter) to save, q to discard.")
+    return None
+
+
 def run_detect_screen(config, canvas_width, canvas_height, fullscreen, display_index=0, config_path=None):
     """Project calibration patterns, find the screen with the camera, and save its corners on confirmation."""
     device, camera_size = detection_camera(config)
@@ -178,23 +199,31 @@ def run_detect_screen(config, canvas_width, canvas_height, fullscreen, display_i
             print(f"Warning: {warning}")
         print("Detected screen corners:", result.corners)
         print("Check the green outline sits on the inner edge of the black border.")
-        print("Press Enter or s to save it, Esc or q to discard.")
+        print("Press Enter or s to save it, Esc or q to discard -- on the Pi's keyboard,")
+        print("or type it here and press Enter.")
 
         show(outline_pattern(canvas_width, canvas_height, result.corners))
+        if sys.stdin and sys.stdin.isatty():
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)   # ignore anything typed during detection
         while True:
+            choice = terminal_choice()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return False
                 if event.type == pygame.KEYDOWN:
                     if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_s):
-                        corners = {k: [round(v, 1) for v in xy] for k, xy in result.corners.items()}
-                        config.setdefault('screen', {})['corners'] = corners
-                        save_config(config, config_path)
-                        print(f"Saved screen corners to {config_path}")
-                        return True
-                    if event.key in (pygame.K_ESCAPE, pygame.K_q):
-                        print("Discarded")
-                        return False
+                        choice = 'save'
+                    elif event.key in (pygame.K_ESCAPE, pygame.K_q):
+                        choice = 'discard'
+            if choice == 'save':
+                corners = {k: [round(v, 1) for v in xy] for k, xy in result.corners.items()}
+                config.setdefault('screen', {})['corners'] = corners
+                save_config(config, config_path)
+                print(f"Saved screen corners to {config_path}")
+                return True
+            if choice == 'discard':
+                print("Discarded")
+                return False
             pygame.time.wait(30)
     finally:
         renderer.close()
