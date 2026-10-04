@@ -33,3 +33,44 @@ def test_tcp6_format():
 
 def test_header_only():
     assert count_established(PROC_NET_TCP.splitlines()[0], 7000) == 0
+
+
+def fake_querycap(monkeypatch, device_caps=None, open_error=False):
+    import struct
+    from src.sources import airplay
+
+    def fake_open(path, flags):
+        if open_error:
+            raise FileNotFoundError(path)
+        return 99
+
+    def fake_ioctl(fd, request, arg):
+        if device_caps is None:
+            raise OSError("not a V4L2 device")
+        buf = bytearray(104)
+        struct.pack_into('<I', buf, 88, device_caps)
+        return bytes(buf)
+
+    monkeypatch.setattr(airplay.os, 'open', fake_open)
+    monkeypatch.setattr(airplay.os, 'close', lambda fd: None)
+    monkeypatch.setattr(airplay.fcntl, 'ioctl', fake_ioctl)
+
+
+def test_loopback_without_writer_is_not_ready(monkeypatch):
+    from src.sources.airplay import has_video_capture
+    fake_querycap(monkeypatch, device_caps=0x05200002)   # output only, as UxPlay leaves it idle
+    assert not has_video_capture('/dev/video10')
+
+
+def test_loopback_with_writer_is_ready(monkeypatch):
+    from src.sources.airplay import has_video_capture
+    fake_querycap(monkeypatch, device_caps=0x05200001)
+    assert has_video_capture('/dev/video10')
+
+
+def test_missing_device_is_not_ready_and_unknown_is_tried(monkeypatch):
+    from src.sources.airplay import has_video_capture
+    fake_querycap(monkeypatch, open_error=True)
+    assert not has_video_capture('/dev/video10')
+    fake_querycap(monkeypatch, device_caps=None)
+    assert has_video_capture('/dev/video10')

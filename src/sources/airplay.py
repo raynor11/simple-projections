@@ -1,3 +1,6 @@
+import fcntl
+import os
+import struct
 import time
 from pathlib import Path
 
@@ -23,6 +26,32 @@ def count_established(proc_net_tcp_text, port):
         if state == TCP_ESTABLISHED and int(local.rsplit(':', 1)[1], 16) == port:
             count += 1
     return count
+
+
+# struct v4l2_capability is 104 bytes; device_caps is the u32 at offset 88.
+VIDIOC_QUERYCAP = 0x80685600
+V4L2_CAP_VIDEO_CAPTURE = 0x1
+
+
+def has_video_capture(device):
+    """
+    Whether a V4L2 device currently offers video capture. A v4l2loopback
+    device with exclusive_caps=1 only does while something is writing to it,
+    so this tells whether UxPlay is sending video (an audio-only AirPlay
+    session never writes any). Unknown (not Linux, ioctl failed) counts as yes.
+    """
+    try:
+        fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        buf = fcntl.ioctl(fd, VIDIOC_QUERYCAP, bytes(104))
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    device_caps = struct.unpack_from('<I', buf, 88)[0]
+    return bool(device_caps & V4L2_CAP_VIDEO_CAPTURE)
 
 
 def airplay_connected(port):
@@ -58,6 +87,9 @@ class AirPlaySource(OnDemandCaptureSource):
         self.port = int(cfg.get('port', 7000))
         self.debouncer = ActiveDebouncer(cfg.get('grace_seconds', DEFAULT_GRACE_SECONDS))
         self._last_check = 0.0
+
+    def _device_ready(self):
+        return has_video_capture(self.cfg['device'])
 
     def _session_active(self):
         now = time.monotonic()

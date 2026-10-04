@@ -94,8 +94,15 @@ class V4L2Source(ThreadedSource):
         self.cfg = dict(cfg)
         return True
 
+    def _device_ready(self):
+        """Whether it's worth trying to open the device now (subclasses can wait for it)."""
+        return True
+
     def _run(self):
         while not self._stop.is_set():
+            if not self._device_ready():
+                self._stop.wait(self.RECONNECT_SECONDS)
+                continue
             cap = open_capture(self.cfg['device'], self.cfg.get('width', DEFAULT_SIZE[0]),
                                self.cfg.get('height', DEFAULT_SIZE[1]), self.cfg.get('fps'),
                                self.cfg.get('fourcc', 'MJPG'), self.cfg.get('decoder', 'opencv'))
