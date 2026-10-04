@@ -15,11 +15,12 @@ PROC_TCP_FILES = ('/proc/net/tcp', '/proc/net/tcp6')
 CHECK_SECONDS = 0.5
 # An AirPlay session that sends no video is a phone handing a video over
 # ("AirPlay video", which UxPlay doesn't take) or playing audio only. After
-# HINT_AFTER_SECONDS without video, the frame suggests the Chromecast.
+# HINT_AFTER_SECONDS without video, the frame explains that only sound is
+# playing and how to get video.
 HINT_AFTER_SECONDS = 5
 HINT_SECONDS = 20
-DEFAULT_HINT = [("To watch a video here, cast it to the Chromecast", 1.0),
-                ("AirPlay works for screen mirroring", 0.6)]
+DEFAULT_HINT = [("AirPlay is playing sound only", 1.0),
+                ("To show video, use Screen Mirroring or cast to the Chromecast", 0.6)]
 
 
 def count_established(proc_net_tcp_text, port):
@@ -138,7 +139,7 @@ class AirPlaySource(OnDemandCaptureSource):
         if self._hint_since is None:
             rows = self._hint_rows()
             if rows and t - self._session_started >= HINT_AFTER_SECONDS:
-                print("airplay: no video in this session; showing the Chromecast hint")
+                print("airplay: no video in this session; showing the sound-only hint")
                 self._publish(self._render_hint(rows))
                 self._hint_since = t
         elif t - self._hint_since >= HINT_SECONDS:

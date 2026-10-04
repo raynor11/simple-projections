@@ -15,7 +15,7 @@ Built for this setup:
 
 - **Screen detection:** the webcam finds the screen, and frames are laid out as rectangles on it. The keystone correction is exact (per-pixel perspective warp). If the projector moves, re-run detection and the layout stays put.
 - **Frame types:** video/image files, text, weather (with icons, for your local area), a live camera, Chromecast and AirPlay.
-- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector. AirPlay is for screen mirroring: a video app that hands a video off to AirPlay isn't supported, and the AirPlay frame suggests the Chromecast instead.
+- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector. AirPlay is for screen mirroring: a video app that hands a video off to AirPlay isn't supported, its sound still plays, and the AirPlay frame suggests Screen Mirroring or the Chromecast for the video.
 - **Frame rules:** frames can change while something else is happening, for example "shrink the weather while casting" or "hide the message at night".
 - **Live config:** edit `config/frames.json` over SSH and the running display picks up the change.
 - **Power:** turning the wall switch off turns the projector off, then shuts the Pi down cleanly. Turning it on brings everything back up.
@@ -164,7 +164,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. |
 | `camera` | `device`, `width`, `height`, `fps` |
 | `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `paused_hide_seconds` (default 60: hide after the video has been paused or stopped this long, since "stop casting" in many apps leaves the app open on the Chromecast), `idle_app_ids` |
-| `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds`, `hint` (shown when an AirPlay session sends no video, e.g. a video app handing off to AirPlay, which UxPlay doesn't support: suggests the Chromecast. A string replaces the text; `false` turns it off) |
+| `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds`, `hint` (shown when an AirPlay session sends no video, e.g. a video app handing off to AirPlay, which UxPlay doesn't support: says only sound is playing and suggests Screen Mirroring or the Chromecast. A string replaces the text; `false` turns it off) |
 
 ### Rules
 
