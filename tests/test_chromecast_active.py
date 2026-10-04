@@ -134,3 +134,35 @@ def test_idle_app_is_not_casting():
     w, clock = make_watcher()
     w.new_cast_status(status(BACKDROP_APP_ID, 'Backdrop'))
     assert not w.active
+
+
+def test_video_already_paused_at_connect_stays_hidden():
+    w, clock = make_watcher()
+    w._connected_at = clock.t
+    w.new_cast_status(status('0BBC55A6', 'Nebula'))
+    assert not w.active                   # waiting for the media status
+    w.new_media_status(media('PAUSED'))
+    assert not w.active                   # paused before we connected
+    w.new_media_status(media('PLAYING'))
+    assert w.active
+
+
+def test_playing_at_connect_shows_once_media_status_arrives():
+    w, clock = make_watcher()
+    w._connected_at = clock.t
+    w.new_cast_status(status('0BBC55A6', 'Nebula'))
+    w.new_media_status(media('PLAYING'))
+    assert w.active
+    clock.t = 30
+    w.new_media_status(media('PAUSED'))
+    clock.t = 80
+    assert w.active                       # a later pause gets the full timeout
+
+
+def test_app_without_media_shows_after_connect_wait():
+    w, clock = make_watcher()
+    w._connected_at = clock.t
+    w.new_cast_status(status('233637DE', 'Some App'))
+    assert not w.active
+    clock.t = 6
+    assert w.active

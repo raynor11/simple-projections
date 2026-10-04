@@ -9,6 +9,7 @@ BACKDROP_APP_ID = 'E8C28D3C'   # the Chromecast's idle ambient screen
 DISCOVERY_RETRY_SECONDS = 30
 DEFAULT_PAUSED_HIDE_SECONDS = 60
 STOPPED_MEDIA_STATES = ('PAUSED', 'IDLE')
+CONNECT_MEDIA_WAIT_SECONDS = 5
 
 
 def is_casting(status, idle_app_ids=()):
@@ -39,6 +40,9 @@ class CastWatcher:
         self._app_casting = False
         self._media_state = None
         self._media_since = None
+        # Right after connecting we don't know how long a paused video has
+        # been paused, so wait briefly for the media status before showing.
+        self._connected_at = None
         self._stop = threading.Event()
         self._lost = threading.Event()
         self._thread = None
@@ -54,12 +58,16 @@ class CastWatcher:
     def _raw(self):
         if not self._app_casting:
             return False
+        if (self._connected_at is not None and self._media_state is None
+                and self.clock() - self._connected_at < CONNECT_MEDIA_WAIT_SECONDS):
+            return False
         stopped_for = (self.clock() - self._media_since
                        if self._media_state in STOPPED_MEDIA_STATES else 0)
         return stopped_for < self.paused_hide_seconds
 
     def _reset(self):
         with self._lock:
+            self._connected_at = None
             self._app_id = None
             self._app_casting = False
             self._media_state = None
@@ -79,8 +87,13 @@ class CastWatcher:
         with self._lock:
             state = status.player_state
             if state != self._media_state:
+                first_since_connect = self._connected_at is not None
                 self._media_state = state
                 self._media_since = self.clock()
+                if first_since_connect and state in STOPPED_MEDIA_STATES:
+                    # Already paused when we connected: treat it as paused long ago.
+                    self._media_since -= self.paused_hide_seconds
+            self._connected_at = None
             self.debouncer.set(self._raw())
 
     def new_connection_status(self, status):
@@ -121,6 +134,8 @@ class CastWatcher:
             warned = False
             cast = casts[0]
             self._lost.clear()
+            with self._lock:
+                self._connected_at = self.clock()
             try:
                 cast.register_status_listener(self)
                 cast.register_connection_listener(self)
