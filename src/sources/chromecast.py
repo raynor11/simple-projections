@@ -60,7 +60,6 @@ class CastWatcher:
     def _run(self):
         try:
             import pychromecast
-            from pychromecast.discovery import stop_discovery
         except ImportError:
             print("Chromecast detection disabled: PyChromecast isn't installed")
             return
@@ -69,8 +68,8 @@ class CastWatcher:
         while not self._stop.is_set():
             casts, browser = pychromecast.get_listed_chromecasts(friendly_names=[self.name],
                                                                  discovery_timeout=10)
-            stop_discovery(browser)
             if not casts:
+                browser.stop_discovery()
                 if not warned:
                     print(f"Chromecast {self.name!r} not found on the network; retrying every "
                           f"{DISCOVERY_RETRY_SECONDS}s")
@@ -87,7 +86,11 @@ class CastWatcher:
                 cast.wait(timeout=30)
                 print(f"Connected to Chromecast {self.name!r}")
                 self.new_cast_status(cast.status)
-                self._lost.wait()
+                # If pychromecast's socket thread dies it reports nothing, so check on it.
+                while not self._lost.wait(5):
+                    if not cast.socket_client.is_alive():
+                        print(f"Chromecast {self.name!r} connection thread exited; reconnecting")
+                        break
             except Exception as e:
                 print(f"Chromecast connection error: {e}")
             finally:
@@ -96,6 +99,9 @@ class CastWatcher:
                     cast.disconnect(timeout=5)
                 except Exception:
                     pass
+                # The cast resolves its host through the browser's zeroconf, so
+                # discovery must outlive the connection.
+                browser.stop_discovery()
             self._stop.wait(5)
 
 
