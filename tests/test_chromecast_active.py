@@ -54,6 +54,7 @@ class FakeCast:
         self.browser, self.watcher = browser, watcher
         self.status = status('233637DE', 'YouTube')
         self.socket_client = SimpleNamespace(is_alive=lambda: True)
+        self.media_controller = SimpleNamespace(register_status_listener=lambda listener: None)
         self.discovery_running_at_connect = None
 
     def register_status_listener(self, listener):
@@ -82,3 +83,54 @@ def test_watcher_keeps_discovery_running_while_connected(monkeypatch):
     watcher._run()
     assert cast.discovery_running_at_connect
     assert browser.stopped
+
+
+def make_watcher(paused_hide_seconds=60, grace_seconds=3):
+    from src.sources.chromecast import CastWatcher
+    clock = SimpleNamespace(t=0.0)
+    w = CastWatcher('Living Room Projector', grace_seconds=grace_seconds,
+                    paused_hide_seconds=paused_hide_seconds, clock=lambda: clock.t)
+    return w, clock
+
+
+def media(state):
+    return SimpleNamespace(player_state=state)
+
+
+def test_paused_video_stops_counting_as_casting():
+    w, clock = make_watcher()
+    w.new_cast_status(status('0BBC55A6', 'Nebula'))
+    w.new_media_status(media('PLAYING'))
+    assert w.active
+    clock.t = 10
+    w.new_media_status(media('PAUSED'))
+    clock.t = 69
+    assert w.active                       # a short pause keeps the frame
+    clock.t = 71
+    assert w.active                       # timed out, but within the grace period
+    clock.t = 75
+    assert not w.active
+    w.new_media_status(media('PLAYING'))  # resuming brings it straight back
+    assert w.active
+
+
+def test_app_without_media_session_stays_active():
+    w, clock = make_watcher()
+    w.new_cast_status(status('233637DE', 'Some App'))
+    clock.t = 1000
+    assert w.active
+
+
+def test_new_app_forgets_old_media_state():
+    w, clock = make_watcher()
+    w.new_cast_status(status('0BBC55A6', 'Nebula'))
+    w.new_media_status(media('PAUSED'))
+    clock.t = 100
+    w.new_cast_status(status('233637DE', 'YouTube'))
+    assert w.active
+
+
+def test_idle_app_is_not_casting():
+    w, clock = make_watcher()
+    w.new_cast_status(status(BACKDROP_APP_ID, 'Backdrop'))
+    assert not w.active

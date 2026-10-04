@@ -163,7 +163,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf). The text auto-sizes to fill the frame. |
 | `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. |
 | `camera` | `device`, `width`, `height`, `fps` |
-| `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `idle_app_ids` |
+| `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `paused_hide_seconds` (default 60: hide after the video has been paused or stopped this long, since "stop casting" in many apps leaves the app open on the Chromecast), `idle_app_ids` |
 | `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds` |
 
 ### Rules

@@ -1,4 +1,5 @@
 import threading
+import time
 
 from .audio import AudioLoop
 from .cast import ActiveDebouncer, OnDemandCaptureSource, DEFAULT_GRACE_SECONDS
@@ -6,6 +7,8 @@ from .cast import ActiveDebouncer, OnDemandCaptureSource, DEFAULT_GRACE_SECONDS
 
 BACKDROP_APP_ID = 'E8C28D3C'   # the Chromecast's idle ambient screen
 DISCOVERY_RETRY_SECONDS = 30
+DEFAULT_PAUSED_HIDE_SECONDS = 60
+STOPPED_MEDIA_STATES = ('PAUSED', 'IDLE')
 
 
 def is_casting(status, idle_app_ids=()):
@@ -18,12 +21,24 @@ def is_casting(status, idle_app_ids=()):
 
 
 class CastWatcher:
-    """Finds a Chromecast by name on the LAN and tracks whether something is being cast to it."""
+    """
+    Finds a Chromecast by name on the LAN and tracks whether something is being
+    cast to it. "Stop casting" in many apps leaves the app open on the
+    Chromecast with its video paused, so media that has been paused or idle
+    for paused_hide_seconds also counts as not casting.
+    """
 
-    def __init__(self, name, idle_app_ids=(), grace_seconds=DEFAULT_GRACE_SECONDS):
+    def __init__(self, name, idle_app_ids=(), grace_seconds=DEFAULT_GRACE_SECONDS,
+                 paused_hide_seconds=DEFAULT_PAUSED_HIDE_SECONDS, clock=time.monotonic):
         self.name = name
         self.idle_app_ids = set(idle_app_ids)
-        self.debouncer = ActiveDebouncer(grace_seconds)
+        self.paused_hide_seconds = paused_hide_seconds
+        self.clock = clock
+        self.debouncer = ActiveDebouncer(grace_seconds, clock)
+        self._app_id = None
+        self._app_casting = False
+        self._media_state = None
+        self._media_since = None
         self._stop = threading.Event()
         self._lost = threading.Event()
         self._thread = None
@@ -32,19 +47,45 @@ class CastWatcher:
     @property
     def active(self):
         with self._lock:
+            # Re-evaluated on every read: a pause times out without any new status.
+            self.debouncer.set(self._raw())
             return self.debouncer.value
 
-    def _set_raw(self, raw):
+    def _raw(self):
+        if not self._app_casting:
+            return False
+        stopped_for = (self.clock() - self._media_since
+                       if self._media_state in STOPPED_MEDIA_STATES else 0)
+        return stopped_for < self.paused_hide_seconds
+
+    def _reset(self):
         with self._lock:
-            self.debouncer.set(raw)
+            self._app_id = None
+            self._app_casting = False
+            self._media_state = None
+            self.debouncer.set(False)
 
     # pychromecast listener callbacks (called from its socket thread)
     def new_cast_status(self, status):
-        self._set_raw(is_casting(status, self.idle_app_ids))
+        with self._lock:
+            app_id = status.app_id if status else None
+            if app_id != self._app_id:
+                self._app_id = app_id
+                self._media_state = None   # a new app has no media yet
+            self._app_casting = is_casting(status, self.idle_app_ids)
+            self.debouncer.set(self._raw())
+
+    def new_media_status(self, status):
+        with self._lock:
+            state = status.player_state
+            if state != self._media_state:
+                self._media_state = state
+                self._media_since = self.clock()
+            self.debouncer.set(self._raw())
 
     def new_connection_status(self, status):
         if status.status in ('LOST', 'FAILED', 'DISCONNECTED', 'FAILED_RESOLVE'):
-            self._set_raw(False)
+            self._reset()
             if status.status != 'LOST':  # pychromecast retries LOST connections itself
                 self._lost.set()
 
@@ -83,6 +124,7 @@ class CastWatcher:
             try:
                 cast.register_status_listener(self)
                 cast.register_connection_listener(self)
+                cast.media_controller.register_status_listener(self)
                 cast.wait(timeout=30)
                 print(f"Connected to Chromecast {self.name!r}")
                 self.new_cast_status(cast.status)
@@ -94,7 +136,7 @@ class CastWatcher:
             except Exception as e:
                 print(f"Chromecast connection error: {e}")
             finally:
-                self._set_raw(False)
+                self._reset()
                 try:
                     cast.disconnect(timeout=5)
                 except Exception:
@@ -113,12 +155,14 @@ class ChromecastSource(OnDemandCaptureSource):
     """
 
     DEVICE_KEYS = OnDemandCaptureSource.DEVICE_KEYS + (
-        'cast_name', 'audio_device', 'audio_sink', 'audio_delay_ms', 'idle_app_ids', 'grace_seconds')
+        'cast_name', 'audio_device', 'audio_sink', 'audio_delay_ms', 'idle_app_ids', 'grace_seconds',
+        'paused_hide_seconds')
 
     def __init__(self, cfg):
         super().__init__(cfg)
         self.watcher = CastWatcher(cfg['cast_name'], cfg.get('idle_app_ids', ()),
-                                   cfg.get('grace_seconds', DEFAULT_GRACE_SECONDS))
+                                   cfg.get('grace_seconds', DEFAULT_GRACE_SECONDS),
+                                   cfg.get('paused_hide_seconds', DEFAULT_PAUSED_HIDE_SECONDS))
         if cfg.get('audio_device'):
             self.audio = AudioLoop(cfg['audio_device'], cfg.get('audio_sink', 'projector'),
                                    cfg.get('audio_delay_ms', 120))
