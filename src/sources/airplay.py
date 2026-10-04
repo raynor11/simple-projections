@@ -4,12 +4,22 @@ import struct
 import time
 from pathlib import Path
 
+import cv2
+
 from .cast import ActiveDebouncer, OnDemandCaptureSource, DEFAULT_GRACE_SECONDS
+from .text import FontCache, render_rows, render_size
 
 
 TCP_ESTABLISHED = '01'
 PROC_TCP_FILES = ('/proc/net/tcp', '/proc/net/tcp6')
 CHECK_SECONDS = 0.5
+# An AirPlay session that sends no video is a phone handing a video over
+# ("AirPlay video", which UxPlay doesn't take) or playing audio only. After
+# HINT_AFTER_SECONDS without video, the frame suggests the Chromecast.
+HINT_AFTER_SECONDS = 5
+HINT_SECONDS = 20
+DEFAULT_HINT = [("To watch a video here, cast it to the Chromecast", 1.0),
+                ("AirPlay works for screen mirroring", 0.6)]
 
 
 def count_established(proc_net_tcp_text, port):
@@ -76,6 +86,8 @@ class AirPlaySource(OnDemandCaptureSource):
     """
 
     DEVICE_KEYS = OnDemandCaptureSource.DEVICE_KEYS + ('port', 'grace_seconds')
+    HINT_COLOR = (255, 255, 255, 255)
+    HINT_BACKGROUND = (20, 20, 20, 255)
     # v4l2loopback only accepts readers while UxPlay is writing, so retry
     # opening quickly once a session starts.
     RECONNECT_SECONDS = 0.5
@@ -87,6 +99,57 @@ class AirPlaySource(OnDemandCaptureSource):
         self.port = int(cfg.get('port', 7000))
         self.debouncer = ActiveDebouncer(cfg.get('grace_seconds', DEFAULT_GRACE_SECONDS))
         self._last_check = 0.0
+        self._fonts = None
+        self._reset_hint()
+
+    def _reset_hint(self, started=None):
+        self._session_started = started
+        self._got_video = False
+        self._hint_since = None
+        self._hint_done = False
+
+    def _hint_rows(self):
+        hint = self.cfg.get('hint', True)
+        if hint is False:
+            return None
+        return [(hint, 1.0)] if isinstance(hint, str) else DEFAULT_HINT
+
+    def _render_hint(self, rows):
+        if self._fonts is None:
+            self._fonts = FontCache()
+        rgba = render_rows(rows, render_size(self.target_size), self._fonts,
+                           color=self.HINT_COLOR, background=self.HINT_BACKGROUND)
+        return cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)   # this source publishes BGR
+
+    def _start_capture(self):
+        self._reset_hint(time.monotonic())
+        super()._start_capture()
+
+    def _on_frame(self, frame):
+        self._got_video = True
+        self._hint_since = None
+        super()._on_frame(frame)
+
+    def poll(self, now):
+        super().poll(now)
+        if not self._capturing or self._got_video or self._hint_done:
+            return
+        t = time.monotonic()
+        if self._hint_since is None:
+            rows = self._hint_rows()
+            if rows and t - self._session_started >= HINT_AFTER_SECONDS:
+                print("airplay: no video in this session; showing the Chromecast hint")
+                self._publish(self._render_hint(rows))
+                self._hint_since = t
+        elif t - self._hint_since >= HINT_SECONDS:
+            self._clear()
+            self._hint_since = None
+            self._hint_done = True
+
+    @property
+    def active(self):
+        # Only real video counts for frame rules, not the hint.
+        return self.visible and self._got_video
 
     def _device_ready(self):
         return has_video_capture(self.cfg['device'])

@@ -7,7 +7,9 @@ Wants=network-online.target avahi-daemon.service
 Type=simple
 User=@USER@
 # -p           legacy ports; the RTSP control connection the AirPlay frame watches is TCP 7000
-# -v4l2 -bt709 Pi 4 hardware H.264 decoding (and its full-range color workaround)
+# (no -v4l2)  software H.264 decoding: the Pi's hardware path (v4l2convert) scales a
+#              portrait phone straight to 1280x720, stretching it instead of adding
+#              black bars. Mirroring is at most 720p30, which software decodes easily.
 # -nohold      a new phone can take over from one that's still connected
 # -vs          video goes into the v4l2loopback device the projection mapper reads,
 #              scaled with black bars to a fixed 1280x720 so a portrait phone shows up
@@ -16,7 +18,7 @@ User=@USER@
 # -as          audio to the projector over HDMI
 # -s           tell the phone the display is 1280x720, so it streams no more than that
 #              and the CPU-side videoscale below has little to do
-ExecStart=/usr/bin/uxplay -n Projector -nh -p -v4l2 -bt709 -nohold -s 1280x720 \
+ExecStart=/usr/bin/uxplay -n Projector -nh -p -nohold -s 1280x720 \
     -as "alsasink device=projector" \
     -vs "videoscale ! videoconvert ! video/x-raw,format=YUY2,width=1280,height=720,pixel-aspect-ratio=1/1 ! v4l2sink device=/dev/video10"
 Restart=always

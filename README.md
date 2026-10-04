@@ -15,7 +15,7 @@ Built for this setup:
 
 - **Screen detection:** the webcam finds the screen, and frames are laid out as rectangles on it. The keystone correction is exact (per-pixel perspective warp). If the projector moves, re-run detection and the layout stays put.
 - **Frame types:** video/image files, text, weather (with icons, for your local area), a live camera, Chromecast and AirPlay.
-- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector.
+- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector. AirPlay is for screen mirroring: a video app that hands a video off to AirPlay isn't supported, and the AirPlay frame suggests the Chromecast instead.
 - **Frame rules:** frames can change while something else is happening, for example "shrink the weather while casting" or "hide the message at night".
 - **Live config:** edit `config/frames.json` over SSH and the running display picks up the change.
 - **Power:** turning the wall switch off turns the projector off, then shuts the Pi down cleanly. Turning it on brings everything back up.
@@ -164,7 +164,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. |
 | `camera` | `device`, `width`, `height`, `fps` |
 | `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `paused_hide_seconds` (default 60: hide after the video has been paused or stopped this long, since "stop casting" in many apps leaves the app open on the Chromecast), `idle_app_ids` |
-| `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds` |
+| `airplay` | `device` (`/dev/video10`), `port` (7000), `grace_seconds`, `hint` (shown when an AirPlay session sends no video, e.g. a video app handing off to AirPlay, which UxPlay doesn't support: suggests the Chromecast. A string replaces the text; `false` turns it off) |
 
 ### Rules
 
@@ -279,7 +279,7 @@ If power returns during steps 1–2, the projector is turned back on and nothing
 
 These parts can't be tested off the hardware:
 - [ ] The GL context comes up under kmsdrm. The service sets `MESA_GL_VERSION_OVERRIDE=3.3`; the renderer also falls back to GL 3.1.
-- [ ] UxPlay accepts the multi-element `-vs` pipeline in `scripts/uxplay.service`, and frames appear on `/dev/video10`. If not, change `-vs` to just `v4l2sink device=/dev/video10`: portrait phones will then change the stream size, which v4l2loopback may not handle.
+- [x] UxPlay accepts the multi-element `-vs` pipeline in `scripts/uxplay.service`, and frames appear on `/dev/video10`. Portrait phones are pillarboxed with software decoding; UxPlay's `-v4l2` hardware path stretched them, so it's off.
 - [ ] The projector commands work with `projector_control.py --test` at 115200 baud, including power-on from standby (note which Power Mode setting it needs).
 - [ ] The UPS power cycle works:
   - `upscmd -l apc@localhost` lists `shutdown.return`;

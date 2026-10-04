@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -74,3 +75,50 @@ def test_missing_device_is_not_ready_and_unknown_is_tried(monkeypatch):
     assert not has_video_capture('/dev/video10')
     fake_querycap(monkeypatch, device_caps=None)
     assert has_video_capture('/dev/video10')
+
+
+def make_airplay(monkeypatch, cfg_extra=None):
+    import pygame
+    from src.sources import airplay
+    from src.sources.base import ThreadedSource
+    pygame.font.init()
+    clock = SimpleNamespace(t=1000.0)
+    monkeypatch.setattr(airplay.time, 'monotonic', lambda: clock.t)
+    monkeypatch.setattr(ThreadedSource, 'start', lambda self: None)
+    monkeypatch.setattr(ThreadedSource, 'close', lambda self: None)
+    src = airplay.AirPlaySource({'type': 'airplay', 'device': '/dev/video10', **(cfg_extra or {})})
+    src.set_target_size(640, 360)
+    connected = SimpleNamespace(value=True)
+    monkeypatch.setattr(airplay, 'airplay_connected', lambda port: connected.value)
+    return src, clock, connected
+
+
+def test_session_without_video_shows_hint_then_hides(monkeypatch):
+    src, clock, _ = make_airplay(monkeypatch)
+    src.poll(0)
+    assert not src.visible                    # just started: give video a chance
+    clock.t += 5
+    src.poll(0)
+    assert src.visible and not src.active     # hint showing; not a real cast
+    assert src.latest()[1].shape[2] == 3      # published as BGR like the video
+    clock.t += 20
+    src.poll(0)
+    assert not src.visible                    # hint times out
+
+
+def test_video_replaces_hint(monkeypatch):
+    import numpy as np
+    src, clock, _ = make_airplay(monkeypatch)
+    src.poll(0)
+    clock.t += 5
+    src.poll(0)
+    src._on_frame(np.zeros((720, 1280, 3), np.uint8))
+    assert src.visible and src.active
+
+
+def test_hint_can_be_turned_off(monkeypatch):
+    src, clock, _ = make_airplay(monkeypatch, {'hint': False})
+    src.poll(0)
+    clock.t += 10
+    src.poll(0)
+    assert not src.visible
