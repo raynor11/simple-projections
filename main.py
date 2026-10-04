@@ -13,6 +13,7 @@ from src.config_io import load_config, save_config, validate_config, migrate_con
 from src.platform_io import is_raspberry_pi
 from src.renderer import CanvasRenderer
 from src.calibration import CalibrationUI, HELP
+from src.calibration.terminal import TerminalKeys
 from src.playback import Playback, full_canvas_corners
 from src.renderer import Layer
 from src.screen_detect import DetectionError, capture_and_detect, outline_pattern
@@ -124,14 +125,16 @@ def run_calibration(config, canvas_width, canvas_height, fullscreen, display_ind
     for line in HELP:
         print(f"  {line}")
 
-    while ui.running:
-        ui.handle_events()
-        # get_surface(): the window may have been resized.
-        surface = pygame.display.get_surface() or screen
-        if ui.needs_redraw(surface):        # only after input, hover changes or a message timing out
-            ui.render_grid(surface)
-            pygame.display.flip()
-        clock.tick(60)
+    with TerminalKeys(ui) as terminal:
+        while ui.running:
+            terminal.pump()
+            ui.handle_events()
+            # get_surface(): the window may have been resized.
+            surface = pygame.display.get_surface() or screen
+            if ui.needs_redraw(surface):        # only after input, hover changes or a message timing out
+                ui.render_grid(surface)
+                pygame.display.flip()
+            clock.tick(60)
 
     if ui.modified:
         print("Quit with unsaved changes (press s to save before quitting next time)")

@@ -97,6 +97,8 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 
 `python main.py --calibrate` (add `--windowed` on a Mac; the window can be resized). Everything works with the mouse, the keyboard, or both.
 
+**Without a keyboard on the Pi:** run it over SSH and type in that terminal. The keys below work there too, with two extras, because terminals often don't pass Ctrl/Alt/Shift+arrows through (macOS uses Ctrl+arrows for Spaces): **M** switches the arrows between moving and resizing, and **B** between small and big steps. Ctrl+C quits.
+
 **Mouse**
 - Click a frame to select it, and drag it to move it.
 - Drag the square handles on its corners and edges to resize it.
