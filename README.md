@@ -286,7 +286,7 @@ These parts can't be tested off the hardware:
 - [x] The UPS power cycle works (tested 2026-10-07: switch off → projector off in 14 s → Pi halts → UPS cuts and later restores power → Pi boots and turns the projector on):
   - the BE600M1 doesn't list `shutdown.return` in `upscmd -l apc@localhost`, but NUT 2.8.1's shutdown falls back to a command it does support, and the output comes back with wall power;
   - the full power-loss sequence runs;
-  - turning the switch back on *during* the Pi's shutdown still brings it back (not yet tested).
+  - turning the switch back on *during* the Pi's shutdown still brings it back (tested 2026-10-07: the UPS cycles its output about a minute later and everything boots).
 - [ ] With the camera, weather, text and one active cast, the logged FPS stays at 25 or more (`journalctl -u projection-mapper -f`).
 
 ## Performance on the Pi
