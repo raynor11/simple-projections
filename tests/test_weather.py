@@ -100,3 +100,13 @@ def test_build_url():
 
 def test_describe_unknown():
     assert describe(1234) == "Unknown"
+
+
+def test_retry_backs_off_from_a_quick_first_retry():
+    from src.sources.weather import next_retry, FIRST_RETRY_SECONDS, RETRY_SECONDS
+    waits = [None]
+    for _ in range(6):
+        waits.append(next_retry(waits[-1]))
+    assert waits[1] == FIRST_RETRY_SECONDS == 5
+    assert waits[1:] == [5, 10, 20, 40, 60, 60]
+    assert max(waits[1:]) == RETRY_SECONDS

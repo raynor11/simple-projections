@@ -15,6 +15,13 @@ from .weather_icons import draw_icon, icon_for_code
 API_URL = "https://api.open-meteo.com/v1/forecast"
 REFRESH_SECONDS = 600
 RETRY_SECONDS = 60
+# After a failure, retry quickly first (at boot the network is often up a few
+# seconds before DNS works), backing off to RETRY_SECONDS.
+FIRST_RETRY_SECONDS = 5
+
+
+def next_retry(previous):
+    return FIRST_RETRY_SECONDS if previous is None else min(RETRY_SECONDS, previous * 2)
 # Show a stale marker once the data is this old (e.g. the network is down).
 STALE_SECONDS = 3 * REFRESH_SECONDS
 
@@ -226,6 +233,7 @@ class WeatherSource(TextSource):
 
     def _run(self):
         warned = False
+        retry = None
         while not self._stop.is_set():
             lat, lon = self._coords()
             if lat is None or lon is None:
@@ -233,7 +241,8 @@ class WeatherSource(TextSource):
                     print("Weather: location unknown (no network yet?); retrying. "
                           "Set \"location\": {\"lat\": ..., \"lon\": ...} to skip the lookup.")
                     warned = True
-                self._stop.wait(RETRY_SECONDS)
+                retry = next_retry(retry)
+                self._stop.wait(retry)
                 continue
             try:
                 url = build_url(lat, lon, self.cfg.get('units', 'imperial'))
@@ -242,9 +251,11 @@ class WeatherSource(TextSource):
                 self._fetched_at = time.monotonic()
                 self._dirty = True
                 wait = self.cfg.get('refresh_minutes', REFRESH_SECONDS / 60) * 60
+                retry = None
             except Exception as e:
-                print(f"Weather fetch failed: {e}")
-                wait = RETRY_SECONDS
+                retry = next_retry(retry)
+                print(f"Weather fetch failed (retrying in {retry}s): {e}")
+                wait = retry
             self._stop.wait(wait)
 
     def _is_stale(self):
