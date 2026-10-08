@@ -27,6 +27,7 @@ from .homography import apply_homography, array_to_corners
 
 PATTERN = (9, 6)            # inner corners (columns, rows) of the projected chessboard
 BOARD_FRACTION = 0.7        # the chessboard spans this share of the canvas
+BOARD_WHITE_LEVELS = (255, 150, 90)   # chessboard brightness to try, for an overexposing camera
 SETTLE_SECONDS = 1.5        # let the camera's exposure/white balance settle after each pattern
 EDGE_MARGIN_PX = 6          # projector px: a screen corner this close to the canvas edge is suspicious
 EXPECTED_ASPECT = 16 / 9
@@ -59,10 +60,11 @@ class DetectionResult:
 
 # -- patterns ----------------------------------------------------------------
 
-def chessboard_pattern(width, height, pattern=PATTERN, fraction=BOARD_FRACTION):
+def chessboard_pattern(width, height, pattern=PATTERN, fraction=BOARD_FRACTION, white=255):
     """
-    A white canvas with a centered chessboard. Returns (RGBA image, inner
-    corner positions in canvas pixels, row-major from the top-left).
+    A white (or, with `white` below 255, grey) canvas with a centered
+    chessboard. Returns (RGBA image, inner corner positions in canvas pixels,
+    row-major from the top-left).
     """
     cols, rows = pattern
     square = int(min(width * fraction / (cols + 1), height * fraction / (rows + 1)))
@@ -70,6 +72,7 @@ def chessboard_pattern(width, height, pattern=PATTERN, fraction=BOARD_FRACTION):
     x0, y0 = (width - board_w) // 2, (height - board_h) // 2
 
     img = np.full((height, width, 4), 255, np.uint8)
+    img[..., :3] = white
     for r in range(rows + 1):
         for c in range(cols + 1):
             if (r + c) % 2 == 0:
@@ -487,8 +490,17 @@ def capture_and_detect(show, pump, device, canvas_size, camera_size=(1920, 1080)
         white = camera.grab_after(SETTLE_SECONDS, pump)
         show(solid_pattern(width, height, 0))
         black = camera.grab_after(SETTLE_SECONDS, pump)
-        show(board)
-        board_img = camera.grab_after(SETTLE_SECONDS, pump)
+        # The webcam can't lock its exposure, and an overexposed board blooms
+        # until the black squares stop touching; then a dimmer board works.
+        board_img, tries = None, []
+        for level in BOARD_WHITE_LEVELS:
+            show(chessboard_pattern(width, height, white=level)[0])
+            board_img = camera.grab_after(SETTLE_SECONDS, pump)
+            try:
+                find_board_corners(board_img)
+                break
+            except DetectionError:
+                tries.append((level, board_img))
     finally:
         camera.set_auto_exposure(True)
         camera.close()
@@ -497,5 +509,9 @@ def capture_and_detect(show, pump, device, canvas_size, camera_size=(1920, 1080)
     save_path.mkdir(parents=True, exist_ok=True)
     for name, img in (('white', white), ('black', black), ('board', board_img)):
         cv2.imwrite(str(save_path / f"detect_{name}.png"), img)
+    for level, img in tries:
+        cv2.imwrite(str(save_path / f"detect_board_failed_{level}.png"), img)
+    if len(tries) > 0 and len(tries) < len(BOARD_WHITE_LEVELS):
+        print(f"Found the chessboard after dimming it to {BOARD_WHITE_LEVELS[len(tries)]}/255")
 
     return detect_screen(white, black, board_img, board_px, canvas_size)
