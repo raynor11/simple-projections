@@ -40,6 +40,8 @@ VOLUME_SET = (0x13, 0x2A)                         # p.64 (value 0-10)
 LIGHT_SOURCE_HOURS = (0x15, 0x01)                 # p.68
 DEFAULT_BAUD = 115200
 ACK = bytes([0x03, 0x14, 0x00, 0x00, 0x00, 0x14])
+REPLY_STARTS = (0x00, 0x03, 0x05)   # 00 14: the projector rejected the command
+MAX_NOTICE_BYTES = 256
 
 
 class ProjectorError(RuntimeError):
@@ -110,10 +112,28 @@ class ViewSonicProjector:
             self._serial = None
 
     def _read_response(self, ser):
-        header = ser.read(5)
+        # The projector also sends unsolicited ASCII notices (e.g. "\nINFO1\r" while
+        # it warms up), which can arrive before a reply: skip to the reply's
+        # start (03 14 for an ACK, 05 14 for a read, 00 14 for a rejection) and
+        # discard the rest.
+        skipped = bytearray()
+        prev = None
+        while True:
+            b = ser.read(1)
+            if not b:
+                raise ProjectorError("No response from the projector (is it plugged in, and is "
+                                     "RS-232 control in standby enabled?)"
+                                     + (f"; got only {bytes(skipped)!r}" if skipped else ""))
+            if prev is not None and prev in REPLY_STARTS and b[0] == 0x14:
+                break
+            if prev is not None:
+                skipped.append(prev)
+            prev = b[0]
+            if len(skipped) > MAX_NOTICE_BYTES:
+                raise ProjectorError(f"Unexpected data from the projector: {bytes(skipped)!r}")
+        header = bytes([prev, 0x14]) + ser.read(3)
         if len(header) < 5:
-            raise ProjectorError("No response from the projector (is it plugged in, and is "
-                                 "RS-232 control in standby enabled?)")
+            raise ProjectorError(f"Truncated reply: {header.hex(' ')}")
         rest = ser.read(header[3] + 1)
         return header + rest
 

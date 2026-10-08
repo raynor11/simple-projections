@@ -123,3 +123,17 @@ def test_rejected_command_raises():
     p, _ = projector([hexbytes("00 14 00 00 00 14")])
     with pytest.raises(ProjectorError, match="rejected"):
         p.power_on()
+
+
+def test_unsolicited_notice_before_reply_is_skipped():
+    # Seen on the real LS740-4K right after power-on: "\nINFO1\r" then the reply.
+    notice = b'\nINFO1\r'
+    p, _ = projector([notice + hexbytes("05 14 00 03 00 00 00 01 18"), notice + ACK])
+    assert p.power_state() == 'on'
+    p.power_on()
+
+
+def test_notice_without_reply_reports_it():
+    p, _ = projector([b'\nINFO1\r'])
+    with pytest.raises(ProjectorError, match="INFO1"):
+        p.power_state()
