@@ -5,10 +5,11 @@ Find the projector screen with a camera.
    are known, find it in the camera image, and compute the camera ->
    projector homography. The screen is flat, so one homography maps any
    point on it exactly.
-2. Project full white and full black. The white screen surface lights up;
-   its black border absorbs the light and leaves a dark ring around it.
-   The bright four-sided region with no holes in it is the screen.
-3. Map the screen's corners through the homography into projector pixels.
+2. Project full white, warp the photo into projector pixels with that
+   homography, and scan outwards from inside the screen to where the bright
+   screen meets its dark border. A line fitted to each side gives the corners.
+   (This webcam has no exposure lock, so the white and black photos aren't
+   comparable; only brightness differences within the white photo are used.)
 """
 
 import time
@@ -24,9 +25,19 @@ from .homography import apply_homography, array_to_corners
 PATTERN = (9, 6)            # inner corners (columns, rows) of the projected chessboard
 BOARD_FRACTION = 0.7        # the chessboard spans this share of the canvas
 SETTLE_SECONDS = 1.5        # let the camera's exposure/white balance settle after each pattern
-MIN_SCREEN_AREA = 0.03      # of the camera image
 EDGE_MARGIN_PX = 6          # projector px: a screen corner this close to the canvas edge is suspicious
 EXPECTED_ASPECT = 16 / 9
+# Finding the screen's edges (projector pixels unless noted):
+SCAN_MARGIN_PX = 200        # also look this far past the canvas edge
+SCAN_START = 0.3            # start scanning this far in from each side (inside the screen)
+SCAN_SPAN = (0.2, 0.8)      # scan lines cover this middle part of each side, away from corners
+SCAN_LINES = 80             # scan lines per side
+SCAN_REF_SAMPLES = 40       # samples at the start of a scan that give the screen's brightness
+BORDER_DARKNESS = 0.5       # the border starts where brightness drops below this share
+BORDER_SEARCH_PX = 40       # look this far into the border for its darkest level
+LINE_TOLERANCE_PX = 2.0
+MIN_SCREEN_BRIGHTNESS = 40  # 8-bit: the middle of the screen in the white photo
+MIN_EDGE_POINTS = 10
 
 
 class DetectionError(RuntimeError):
@@ -115,81 +126,116 @@ def find_projector_homography(cam_img, board_px, pattern=PATTERN):
     return H
 
 
-def _refine_quad(contour, quad):
-    """Sub-pixel corners: fit a line to the contour points along each side and intersect neighbours."""
-    pts = contour.reshape(-1, 2).astype(np.float64)
-    lines = []
-    for i in range(4):
-        a, b = quad[i], quad[(i + 1) % 4]
-        ab = b - a
-        length = np.linalg.norm(ab)
-        t = ((pts - a) @ ab) / (length ** 2)
-        rel = pts - a
-        dist = np.abs(ab[0] * rel[:, 1] - ab[1] * rel[:, 0]) / length
-        # Middle 80% of each side, away from rounded/blurred corners.
-        side = pts[(t > 0.1) & (t < 0.9) & (dist < max(3.0, 0.02 * length))]
-        if len(side) < 5:
-            return quad
-        vx, vy, x0, y0 = cv2.fitLine(side.astype(np.float32), cv2.DIST_HUBER, 0, 0.01, 0.01).ravel()
-        lines.append((np.array([x0, y0]), np.array([vx, vy])))
-    refined = []
-    for i in range(4):
-        (p1, d1), (p2, d2) = lines[i - 1], lines[i]
-        denom = d1[0] * d2[1] - d1[1] * d2[0]
-        if abs(denom) < 1e-9:
-            return quad
-        s = ((p2[0] - p1[0]) * d2[1] - (p2[1] - p1[1]) * d2[0]) / denom
-        refined.append(p1 + s * d1)
-    return np.array(refined)
-
-
-def find_screen_quad(white_img, black_img):
+def _crossing(profile, start_ref=SCAN_REF_SAMPLES):
     """
-    The screen's corners in the camera image (TL, TR, BR, BL), from photos
-    taken while projecting full white and full black.
+    Index (sub-pixel) where a brightness profile, starting inside the screen,
+    first falls to halfway between the screen and the border's darkness.
+    None if it never gets dark (no border on this line).
     """
-    lit = cv2.subtract(to_gray(white_img), to_gray(black_img))
-    lit = cv2.GaussianBlur(lit, (5, 5), 0)
-    _, mask = cv2.threshold(lit, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    ref = float(np.median(profile[:start_ref]))
+    if ref <= 0:
+        return None
+    dark = np.flatnonzero(profile < BORDER_DARKNESS * ref)
+    dark = dark[dark >= start_ref // 2]
+    if dark.size == 0:
+        return None
+    first = dark[0]
+    # The border's own level: the darkest point just past where it starts.
+    floor = float(profile[first:first + BORDER_SEARCH_PX].min())
+    half = (ref + floor) / 2
+    i = first
+    while i > 0 and profile[i - 1] < half:
+        i -= 1
+    if i == 0:
+        return None
+    a, b = float(profile[i - 1]), float(profile[i])
+    return i - 1 + (a - half) / (a - b) if a != b else float(i)
 
-    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    if hierarchy is None:
-        raise DetectionError("Nothing lit up when projecting white. Is the projector on?")
-    image_area = mask.shape[0] * mask.shape[1]
 
-    best, best_area = None, 0
-    for i, contour in enumerate(contours):
-        if hierarchy[0][i][3] != -1:
-            continue   # a hole, not a lit region
-        area = cv2.contourArea(contour)
-        if area < MIN_SCREEN_AREA * image_area or area <= best_area:
-            continue
-        # The lit wall around a screen is a ring with the screen's border as
-        # a big hole in it; the screen itself is solid.
-        child = hierarchy[0][i][2]
-        holes = 0.0
-        while child != -1:
-            holes += cv2.contourArea(contours[child])
-            child = hierarchy[0][child][0]
-        if holes > 0.05 * area:
-            continue
-        approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
-        if len(approx) != 4 or not cv2.isContourConvex(approx):
-            continue
-        best, best_area = (contour, order_corners(approx)), area
+def _robust_line(points):
+    """Fit u = m*v + c through (v, u) points, dropping outliers (e.g. something stuck on the screen)."""
+    pts = np.asarray(points, np.float64)
+    keep = np.ones(len(pts), bool)
+    for _ in range(3):
+        m, c = np.polyfit(pts[keep, 0], pts[keep, 1], 1)
+        resid = np.abs(pts[:, 1] - (m * pts[:, 0] + c))
+        mad = np.median(resid[keep])
+        keep = resid <= max(LINE_TOLERANCE_PX, 4 * mad)
+        if keep.sum() < MIN_EDGE_POINTS:
+            break
+    return m, c, int(keep.sum())
 
-    if best is None:
-        raise DetectionError("Couldn't find a four-sided screen with a dark border in the camera image")
-    contour, quad = best
-    return order_corners(_refine_quad(contour, quad))
+
+def find_screen_in_canvas(white_img, H, canvas_size):
+    """
+    The screen's corners in projector pixels (TL, TR, BR, BL).
+
+    The white photo is warped into projector pixels with the camera ->
+    projector homography H. Then, from inside the screen, many lines are
+    scanned outwards on each side to where the bright screen meets its dark
+    border, and a straight line is fitted to each side. This only needs the
+    screen to be brighter than its border in the white photo, so it doesn't
+    care about the camera's auto-exposure, room light or a bright wall.
+    """
+    width, height = canvas_size
+    m = SCAN_MARGIN_PX
+    shift = np.array([[1, 0, m], [0, 1, m], [0, 0, 1]], np.float64)
+    gray = to_gray(white_img).astype(np.float32)
+    flat = cv2.warpPerspective(gray, shift @ H, (width + 2 * m, height + 2 * m), flags=cv2.INTER_LINEAR)
+    flat = cv2.GaussianBlur(flat, (5, 5), 0)
+    centre = flat[m + height // 3:m + 2 * height // 3, m + width // 3:m + 2 * width // 3]
+    if centre.size == 0 or float(np.median(centre)) < MIN_SCREEN_BRIGHTNESS:
+        raise DetectionError("The screen didn't light up when projecting white. Is the projector "
+                             "on, and is the camera pointed at the screen?")
+
+    def scan(fixed, start, stop, vertical):
+        """Profile from `start` towards `stop` along a row (or a column if vertical)."""
+        step = 1 if stop > start else -1
+        idx = np.arange(start, stop, step) + m
+        line = flat[idx, fixed + m] if vertical else flat[fixed + m, idx]
+        hit = _crossing(line)
+        return None if hit is None else start + step * hit
+
+    rows = np.linspace(SCAN_SPAN[0] * height, SCAN_SPAN[1] * height, SCAN_LINES).astype(int)
+    cols = np.linspace(SCAN_SPAN[0] * width, SCAN_SPAN[1] * width, SCAN_LINES).astype(int)
+    inner_x = (int(SCAN_START * width), int((1 - SCAN_START) * width))
+    inner_y = (int(SCAN_START * height), int((1 - SCAN_START) * height))
+    sides = {
+        # side: (lines along, scan start, scan stop, scanning vertically?)
+        'left': (rows, inner_x[0], -m, False),
+        'right': (rows, inner_x[1], width + m, False),
+        'top': (cols, inner_y[0], -m, True),
+        'bottom': (cols, inner_y[1], height + m, True),
+    }
+    fits = {}
+    for side, (lines, start, stop, vertical) in sides.items():
+        points = []
+        for fixed in lines:
+            hit = scan(int(fixed), start, stop, vertical)
+            if hit is not None:
+                points.append((fixed, hit))
+        if len(points) < MIN_EDGE_POINTS:
+            raise DetectionError(f"Couldn't find the screen's {side} border in the camera image. "
+                                 "Is the whole screen and its black border in the camera's view?")
+        slope, intercept, _ = _robust_line(points)
+        fits[side] = (slope, intercept)
+
+    def corner(vertical_side, horizontal_side):
+        # x = a*y + b (left/right), y = c*x + d (top/bottom)
+        a, b = fits[vertical_side]
+        c, d = fits[horizontal_side]
+        y = (c * b + d) / (1 - a * c)
+        return [a * y + b, y]
+
+    return np.float64([corner('left', 'top'), corner('right', 'top'),
+                       corner('right', 'bottom'), corner('left', 'bottom')])
 
 
 def detect_screen(white_img, black_img, board_img, board_px, canvas_size, pattern=PATTERN):
     """Screen corners in projector pixels, plus warnings about anything that looks off."""
     H = find_projector_homography(board_img, board_px, pattern)
-    cam_quad = find_screen_quad(white_img, black_img)
-    proj = order_corners(apply_homography(H, cam_quad))
+    proj = find_screen_in_canvas(white_img, H, canvas_size)
+    cam_quad = apply_homography(np.linalg.inv(H), proj)
 
     warnings = []
     width, height = canvas_size

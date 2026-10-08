@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.homography import corners_to_array
-from src.screen_detect import chessboard_pattern, detect_screen, DetectionError, find_screen_quad
+from src.screen_detect import chessboard_pattern, detect_screen, DetectionError, find_screen_in_canvas
 
 CANVAS = (1920, 1080)
 CAM = (1600, 1200)
@@ -65,4 +65,21 @@ def test_detects_screen_corners_within_2px(scene):
 def test_no_screen_raises():
     blank = np.full((CAM[1], CAM[0]), 10, np.uint8)
     with pytest.raises(DetectionError):
-        find_screen_quad(blank, blank)
+        find_screen_in_canvas(blank, np.eye(3), CANVAS)
+
+
+def test_auto_exposure_and_bright_wall(scene):
+    """
+    The real webcam can't lock its exposure, and the room light was on: the
+    white photo saturates the screen and the wall comes out nearly as bright,
+    and the black photo is exposed far brighter. Detection must still find it.
+    """
+    corners = np.float32([[0, 0], [CANVAS[0], 0], [CANVAS[0], CANVAS[1]], [0, CANVAS[1]]])
+    proj_to_cam = cv2.getPerspectiveTransform(corners, CANVAS_IN_CAM).astype(np.float64)
+    reflect = reflectance_map(proj_to_cam)
+    board_rgba, board_px = chessboard_pattern(*CANVAS)
+    white = photograph(np.full(CANVAS[::-1], 255), proj_to_cam, reflect * 1.6, ambient=40)   # overexposed
+    black = photograph(np.zeros(CANVAS[::-1]), proj_to_cam, reflect, ambient=180)            # auto-brightened
+    board = photograph(board_rgba[..., 0], proj_to_cam, reflect)
+    found = corners_to_array(detect_screen(white, black, board, board_px, CANVAS).corners)
+    assert np.abs(found - SCREEN_TRUTH).max() < 2.0, found
