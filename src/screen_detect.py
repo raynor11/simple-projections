@@ -106,6 +106,21 @@ def order_corners(points):
     return np.array([pts[np.argmin(s)], pts[np.argmin(d)], pts[np.argmax(s)], pts[np.argmax(d)]])
 
 
+def _outer_square_brightness(gray, cam_pts, pattern, first):
+    """
+    Brightness at the centre of the board's corner square beyond the first
+    (or last) inner corner, sampled in the camera image.
+    """
+    cols, _ = pattern
+    pts = cam_pts if first else cam_pts[::-1]
+    corner, along_row, along_col = pts[0], pts[1], pts[cols]
+    centre = corner + 0.5 * ((corner - along_row) + (corner - along_col))
+    r = max(2, int(0.15 * np.linalg.norm(corner - along_row)))
+    x, y = int(round(centre[0])), int(round(centre[1]))
+    patch = gray[max(0, y - r):y + r + 1, max(0, x - r):x + r + 1]
+    return float(patch.mean()) if patch.size else 0.0
+
+
 def find_projector_homography(cam_img, board_px, pattern=PATTERN):
     """Camera -> projector homography from a photo of the projected chessboard."""
     gray = to_gray(cam_img)
@@ -115,10 +130,12 @@ def find_projector_homography(cam_img, board_px, pattern=PATTERN):
         raise DetectionError("Couldn't find the projected chessboard in the camera image. "
                              "Is the camera pointed at the screen and in focus?")
     cam_pts = cam_pts.reshape(-1, 2)
-    # The detector may number the corners from either end of the board. The
-    # camera is roughly upright relative to the projector, so the first
-    # corner should be the top-left one.
-    if cam_pts[0].sum() > cam_pts[-1].sum():
+    # The detector may number the corners from either end of the board, and
+    # the camera can be mounted at any angle (even on its side), so tell the
+    # ends apart by the board itself: its top-left square is black and its
+    # bottom-right square white.
+    if _outer_square_brightness(gray, cam_pts, pattern, first=True) > \
+            _outer_square_brightness(gray, cam_pts, pattern, first=False):
         cam_pts = cam_pts[::-1]
     H, _ = cv2.findHomography(cam_pts, board_px, cv2.RANSAC, 3.0)
     if H is None:

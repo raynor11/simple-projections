@@ -83,3 +83,12 @@ def test_auto_exposure_and_bright_wall(scene):
     board = photograph(board_rgba[..., 0], proj_to_cam, reflect)
     found = corners_to_array(detect_screen(white, black, board, board_px, CANVAS).corners)
     assert np.abs(found - SCREEN_TRUTH).max() < 2.0, found
+
+
+@pytest.mark.parametrize('turns', [1, 2, 3])
+def test_camera_mounted_at_any_angle(scene, turns):
+    """The real webcam is mounted on its side; the board's orientation must come from the board."""
+    white, black, board = (np.ascontiguousarray(np.rot90(img, -turns)) for img in scene[:3])
+    board_px = scene[3]
+    found = corners_to_array(detect_screen(white, black, board, board_px, CANVAS).corners)
+    assert np.abs(found - SCREEN_TRUTH).max() < 2.0, found
