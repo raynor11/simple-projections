@@ -269,7 +269,7 @@ If power returns during steps 1–2, the projector is turned back on and nothing
 
 - **UPS load:** the LS740-4K draws 165–210 W and the Pi under 10 W, comfortably within the BE600M1's 330 W. Plug both into the **battery-backed** outlets, not the surge-only ones. The Pi's own power supply must be on the UPS too; the USB cable is only for data.
 - **Projector settings:** see [Projector setup](#projector-setup-ls740-4k-menu).
-- **RS-232:** the Pi has no serial port, so use a USB-to-RS232 adapter (FTDI-based) with a DB-9 male plug. The projector's port is DB-9 female with RX on pin 2, TX on pin 3 and ground on pin 5 (UG p.57), so a standard **straight-through** cable is correct (not null-modem).
+- **RS-232:** the Pi has no serial port, so use an FTDI-based USB-to-RS232 cable. The user guide (p.57) says the projector's port is DB-9 female, but on our LS740-4K it's **male** (pins), wired like a PC's port, so the cable needs a **female** DB-9 and **null-modem** (crossover) wiring. A USB-to-null-modem cable with a female end (FT232R) works at 115200 baud.
 - **Capture card:**
   - 720p MJPEG is recommended on a Pi 4.
   - Put the capture card and the webcam on separate USB 3 ports.
@@ -282,11 +282,11 @@ If power returns during steps 1–2, the projector is turned back on and nothing
 These parts can't be tested off the hardware:
 - [ ] The GL context comes up under kmsdrm. The service sets `MESA_GL_VERSION_OVERRIDE=3.3`; the renderer also falls back to GL 3.1.
 - [x] UxPlay accepts the multi-element `-vs` pipeline in `scripts/uxplay.service`, and frames appear on `/dev/video10`. Portrait phones are pillarboxed with software decoding; UxPlay's `-v4l2` hardware path stretched them, so it's off.
-- [ ] The projector commands work with `projector_control.py --test` at 115200 baud, including power-on from standby (note which Power Mode setting it needs).
-- [ ] The UPS power cycle works:
-  - `upscmd -l apc@localhost` lists `shutdown.return`;
+- [x] The projector commands work with `projector_control.py --test` at 115200 baud, including power-on from standby with Direct/Signal Power On off and the default Power Mode. While warming up it sends ASCII notices like `INFO1` and may not answer; they're skipped.
+- [x] The UPS power cycle works (tested 2026-10-07: switch off → projector off in 14 s → Pi halts → UPS cuts and later restores power → Pi boots and turns the projector on):
+  - the BE600M1 doesn't list `shutdown.return` in `upscmd -l apc@localhost`, but NUT 2.8.1's shutdown falls back to a command it does support, and the output comes back with wall power;
   - the full power-loss sequence runs;
-  - turning the switch back on *during* the Pi's shutdown still brings it back.
+  - turning the switch back on *during* the Pi's shutdown still brings it back (not yet tested).
 - [ ] With the camera, weather, text and one active cast, the logged FPS stays at 25 or more (`journalctl -u projection-mapper -f`).
 
 ## Performance on the Pi
