@@ -161,6 +161,8 @@ def validate_config(config):
     screen = config.get("screen")
     if screen is not None and "corners" in screen:
         _check_corners(screen["corners"], "Screen")
+    if screen is not None and screen.get("rotation", 0) not in (0, 90, 180, 270):
+        raise ValueError("screen.rotation must be 0, 90, 180 or 270")
 
     # Leave "location" out (or set "auto") to look it up from the IP address,
     # or give {"address": ...} to geocode a street address.

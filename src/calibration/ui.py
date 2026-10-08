@@ -8,7 +8,7 @@ import pygame
 
 from ..config_io import load_config, save_config, migrate_config
 from ..homography import CORNER_ORDER, apply_homography, screen_homography
-from ..playback import screen_corners, frame_canvas_corners
+from ..playback import screen_corners, frame_canvas_corners, raw_screen_corners, raw_corner_key
 from ..rules import effective_frame
 from . import widgets as w
 from .editing import (
@@ -113,7 +113,7 @@ class CalibrationUI:
     def screen(self):
         screen = self.config.setdefault('screen', {})
         if 'corners' not in screen:
-            screen['corners'] = {k: list(v) for k, v in screen_corners(self.config).items()}
+            screen['corners'] = {k: list(v) for k, v in raw_screen_corners(self.config).items()}
         return screen
 
     def preview_active_ids(self):
@@ -584,7 +584,8 @@ class CalibrationUI:
         frame = self.get_current_frame()
 
         if self.screen_mode:
-            self.screen()['corners'][drag['handle']] = [round(canvas[0], 1), round(canvas[1], 1)]
+            key = raw_corner_key(self.config, drag['handle'])
+            self.screen()['corners'][key] = [round(canvas[0], 1), round(canvas[1], 1)]
             return
         if frame is None:
             return
@@ -801,7 +802,7 @@ class CalibrationUI:
         if self.screen_mode:
             self._change(group=('screen', self.current_corner))
             step = PIXEL_STEP_BIG if shift else PIXEL_STEP
-            corner = self.screen()['corners'][self.current_corner]
+            corner = self.screen()['corners'][raw_corner_key(self.config, self.current_corner)]
             corner[0] += dx * step
             corner[1] += dy * step
             return

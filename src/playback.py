@@ -25,11 +25,37 @@ def full_canvas_corners(width, height):
     return {'tl': [0, 0], 'tr': [width, 0], 'br': [width, height], 'bl': [0, height]}
 
 
-def screen_corners(config):
-    """The screen's corners in canvas pixels; the whole canvas until a screen is detected."""
+def raw_screen_corners(config):
+    """The screen's corners as stored (named by where they are in the projector's image)."""
     screen = config.get('screen') or {}
     canvas = config['canvas']
     return screen.get('corners') or full_canvas_corners(canvas['width'], canvas['height'])
+
+
+def screen_rotation(config):
+    """How far the screen is turned clockwise relative to the projector's image: 0, 90, 180 or 270."""
+    return int((config.get('screen') or {}).get('rotation', 0)) % 360
+
+
+def raw_corner_key(config, key):
+    """
+    The stored corner that is the screen's `key` corner once rotated. With
+    rotation 90 the screen's top-left is the projector image's top-right
+    corner, and so on round.
+    """
+    turns = screen_rotation(config) // 90
+    return CORNER_ORDER[(CORNER_ORDER.index(key) + turns) % 4]
+
+
+def screen_corners(config):
+    """
+    The screen's corners in canvas pixels, named as the viewer sees them
+    (after screen.rotation); the whole canvas until a screen is detected.
+    Frames are laid out against these, so with a rotation they're upright on
+    a screen the projector lights sideways (e.g. a portrait screen).
+    """
+    raw = raw_screen_corners(config)
+    return {key: raw[raw_corner_key(config, key)] for key in CORNER_ORDER}
 
 
 def frame_canvas_corners(cfg, S, portrait=False):

@@ -219,3 +219,16 @@ def test_hardware_pipelines_and_fallback(monkeypatch):
     opened.clear()
     file_mod.open_video('/media/clip.mp4')
     assert len(opened) == 1                                   # forced straight to software
+
+
+def test_screen_rotation_names_corners_as_the_viewer_sees_them():
+    from src.playback import screen_corners, raw_corner_key
+    raw = {'tl': [0, 0], 'tr': [100, 0], 'br': [100, 50], 'bl': [0, 50]}
+    config = {'canvas': {'width': 1920, 'height': 1080}, 'screen': {'corners': raw}}
+    assert screen_corners(config) == raw
+    config['screen']['rotation'] = 90      # a portrait screen lit by a projector on its side
+    rotated = screen_corners(config)
+    assert rotated == {'tl': [100, 0], 'tr': [100, 50], 'br': [0, 50], 'bl': [0, 0]}
+    assert raw_corner_key(config, 'tl') == 'tr'
+    config['screen']['rotation'] = 270
+    assert screen_corners(config)['tl'] == [0, 50]

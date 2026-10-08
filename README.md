@@ -144,6 +144,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | `canvas` | Output size in pixels (1920×1080). Changing it needs a restart. |
 | `location` | For weather and sunrise/sunset, most to least precise: `{"lat": ..., "lon": ..., "timezone": "America/Los_Angeles"}`; `{"address": "123 Main St, Springfield, IL 62701"}`, which is looked up once (US Census geocoder, or OpenStreetMap for non-US addresses) and cached in `config/location.address.json` until the address changes; or `"auto"` (or leave it out), which uses your internet connection's IP address, is accurate to about city level (wrong behind a VPN) and is cached for a week. |
 | `screen.corners` | Screen corners in canvas pixels, written by `--detect-screen`. Without it, the whole canvas counts as the screen. |
+| `screen.rotation` | `0` (default), `90`, `180` or `270`: how far the screen is turned clockwise relative to the projector's image. A portrait screen lit by a projector on its side is `90` (or `270`); frames are then laid out upright on the screen. Re-running detection keeps it. |
 | `detection.camera` | Camera used by `--detect-screen`. Defaults to the first `camera` frame's device. |
 | `frames` | Frames, drawn in list order (later frames are drawn on top) |
 | `projector` | RS-232 projector control (see below) |
