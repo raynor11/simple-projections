@@ -37,8 +37,10 @@ SCAN_START = 0.3            # start scanning this far in from each side (inside 
 SCAN_SPAN = (0.2, 0.8)      # scan lines cover this middle part of each side, away from corners
 SCAN_LINES = 80             # scan lines per side
 SCAN_REF_SAMPLES = 40       # samples at the start of a scan that give the screen's brightness
-BORDER_DARKNESS = 0.5       # the border starts where brightness drops below this share
-BORDER_SEARCH_PX = 40       # look this far into the border for its darkest level
+BORDER_DIP = 0.15           # the border is at least this much darker than the screen...
+BORDER_SEARCH_PX = 40       # ...within this far, where its darkest point is found...
+BORDER_RECOVER_PX = 60      # ...and the light on the wall past it brightens again within this far
+BORDER_RECOVERY = 0.5       # by at least this share of the way back up to the screen's brightness
 LINE_TOLERANCE_PX = 2.0
 MIN_SCREEN_BRIGHTNESS = 40  # 8-bit: the middle of the screen in the white photo
 EDGE_SPAN = (0.05, 0.95)    # second pass: scan this much of each side of the screen
@@ -56,6 +58,9 @@ class DetectionResult:
     corners: dict                      # screen corners in projector (canvas) pixels
     camera_quad: np.ndarray            # screen corners in the camera image
     warnings: list = field(default_factory=list)
+    # Camera-image points behind the result, for the troubleshooting overlay.
+    border_points: dict = field(default_factory=dict)
+    board_points: np.ndarray = None
 
 
 # -- patterns ----------------------------------------------------------------
@@ -159,22 +164,38 @@ def find_projector_homography(cam_img, board_px, pattern=PATTERN):
 
 def _crossing(profile, start_ref=SCAN_REF_SAMPLES):
     """
-    Index (sub-pixel) where a brightness profile, starting inside the screen,
-    first falls to halfway between the screen and the border's darkness.
-    None if it never gets dark (no border on this line).
+    Index (sub-pixel) of the screen's border along a brightness profile that
+    starts inside the screen: the halfway point down into the first dip that
+    climbs back up again. The border is a dip because past it the projector
+    still lights the wall; where the projector's light simply ends there's a
+    step down that never recovers, which isn't the border. None if no border.
+
+    Relative levels only: the webcam can't lock its exposure, so the screen
+    may be saturated and the border (lit by the projector in a dark room)
+    only a little darker.
     """
     ref = float(np.median(profile[:start_ref]))
     if ref <= 0:
         return None
-    dark = np.flatnonzero(profile < BORDER_DARKNESS * ref)
-    dark = dark[dark >= start_ref // 2]
-    if dark.size == 0:
+    below = np.flatnonzero(profile < (1 - BORDER_DIP) * ref)
+    below = below[below >= start_ref // 2]
+    if below.size == 0:
         return None
-    first = dark[0]
-    # The border's own level: the darkest point just past where it starts.
-    floor = float(profile[first:first + BORDER_SEARCH_PX].min())
+    first = int(below[0])
+    # The bottom of this dip: follow it down until it starts rising again (on
+    # a lightly smoothed copy, so noise doesn't stop it early). Not simply the
+    # lowest point nearby: past a thin band of light the projector's light
+    # may end within a few pixels, and that's lower still.
+    smooth = np.convolve(profile, np.ones(5) / 5, mode='same')
+    low, end = first, min(len(profile) - 1, first + BORDER_SEARCH_PX)
+    while low < end and smooth[low + 1] <= smooth[low]:
+        low += 1
+    floor = float(profile[max(first, low - 2):low + 3].min())
+    after = profile[low:low + BORDER_SEARCH_PX + BORDER_RECOVER_PX]
+    if float(after.max()) < floor + BORDER_RECOVERY * (ref - floor):
+        return None   # a step down, not a dip: the light ends here, not at a border
     half = (ref + floor) / 2
-    i = first
+    i = low
     while i > 0 and profile[i - 1] < half:
         i -= 1
     if i == 0:
@@ -267,7 +288,9 @@ def _scan_sides(flat, canvas_size, corners=None):
                 points.append((fixed, hit) if vertical else (hit, fixed))
         if len(points) < MIN_EDGE_POINTS:
             raise DetectionError(f"Couldn't find the screen's {side} border in the camera image. "
-                                 "Is the whole screen and its black border in the camera's view?")
+                                 "Is the whole screen and its black border in the camera's view, "
+                                 "and does the projected image spill a little past the border on "
+                                 "every side?")
         edges[side] = np.float64(points)
     return edges
 
@@ -434,7 +457,24 @@ def detect_screen(white_img, black_img, board_img, board_px, canvas_size, patter
     if abs(aspect / EXPECTED_ASPECT - 1) > 0.15:
         warnings.append(f"The detected screen's aspect ratio is {aspect:.2f}, not the expected "
                         f"{EXPECTED_ASPECT:.2f} (16:9). Check the preview carefully.")
-    return DetectionResult(corners=array_to_corners(proj), camera_quad=cam_quad, warnings=warnings)
+    return DetectionResult(corners=array_to_corners(proj), camera_quad=cam_quad, warnings=warnings,
+                           border_points=edges_cam, board_points=board_cam)
+
+
+def overlay_image(photo, result):
+    """The white photo with the border points found on each side and the chessboard corners marked."""
+    img = photo.copy() if photo.ndim == 3 else cv2.cvtColor(photo, cv2.COLOR_GRAY2BGR)
+    colours = {'left': (0, 0, 255), 'right': (0, 200, 0), 'top': (255, 0, 0), 'bottom': (0, 200, 255)}
+    for side, pts in result.border_points.items():
+        for x, y in pts:
+            cv2.circle(img, (int(round(x)), int(round(y))), 3, colours[side], -1)
+    if result.board_points is not None:
+        for x, y in result.board_points:
+            cv2.circle(img, (int(round(x)), int(round(y))), 3, (255, 0, 255), -1)
+    for i, (x, y) in enumerate(result.camera_quad):
+        cv2.putText(img, 'TL TR BR BL'.split()[i], (int(x) + 6, int(y) - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8, (255, 255, 255), 2, cv2.LINE_AA)
+    return img
 
 
 # -- running it on real hardware ---------------------------------------------
@@ -514,4 +554,6 @@ def capture_and_detect(show, pump, device, canvas_size, camera_size=(1920, 1080)
     if len(tries) > 0 and len(tries) < len(BOARD_WHITE_LEVELS):
         print(f"Found the chessboard after dimming it to {BOARD_WHITE_LEVELS[len(tries)]}/255")
 
-    return detect_screen(white, black, board_img, board_px, canvas_size)
+    result = detect_screen(white, black, board_img, board_px, canvas_size)
+    cv2.imwrite(str(save_path / "detect_overlay.png"), overlay_image(white, result))
+    return result

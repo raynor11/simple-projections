@@ -201,6 +201,7 @@ def run_detect_screen(config, canvas_width, canvas_height, fullscreen, display_i
         for warning in result.warnings:
             print(f"Warning: {warning}")
         print("Detected screen corners:", result.corners)
+        print("What it found is marked on captures/detect_overlay.png.")
         print("Check the green outline sits on the inner edge of the black border.")
         print("Press Enter or s to save it, Esc or q to discard -- on the Pi's keyboard,")
         print("or type it here and press Enter.")
