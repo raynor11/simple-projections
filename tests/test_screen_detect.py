@@ -92,3 +92,15 @@ def test_camera_mounted_at_any_angle(scene, turns):
     board_px = scene[3]
     found = corners_to_array(detect_screen(white, black, board, board_px, CANVAS).corners)
     assert np.abs(found - SCREEN_TRUTH).max() < 2.0, found
+
+
+def test_wide_angle_lens_distortion(scene):
+    """A barrel-distorting webcam, like the real one: corners must still land within a few px."""
+    from src.screen_detect import LensModel
+    lens = LensModel(CAM, k1=-0.25, k2=-0.3, dx=-60, dy=20)
+    ys, xs = np.mgrid[0:CAM[1], 0:CAM[0]].astype(np.float64)
+    src = lens.undistort(np.stack([xs.ravel(), ys.ravel()], axis=1)).reshape(CAM[1], CAM[0], 2)
+    map_x, map_y = src[..., 0].astype(np.float32), src[..., 1].astype(np.float32)
+    white, black, board = (cv2.remap(img, map_x, map_y, cv2.INTER_LINEAR) for img in scene[:3])
+    found = corners_to_array(detect_screen(white, black, board, scene[3], CANVAS).corners)
+    assert np.abs(found - SCREEN_TRUTH).max() < 4.0, found
