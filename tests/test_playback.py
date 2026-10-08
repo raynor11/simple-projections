@@ -232,3 +232,16 @@ def test_screen_rotation_names_corners_as_the_viewer_sees_them():
     assert raw_corner_key(config, 'tl') == 'tr'
     config['screen']['rotation'] = 270
     assert screen_corners(config)['tl'] == [0, 50]
+
+
+def test_fit_within_keeps_the_content_shape():
+    import numpy as np
+    from src.playback import fit_within
+    frame = np.float64([[0, 0], [900, 0], [900, 1600], [0, 1600]])       # a 9:16 frame
+    tall = fit_within(frame, 9 / 19.5)                                    # an iPhone screen
+    w, h = tall[1][0] - tall[0][0], tall[3][1] - tall[0][1]
+    assert abs(w / h - 9 / 19.5) < 1e-6 and abs(h - 1600) < 1e-6 and abs(tall[0][0] - (900 - w) / 2) < 1e-6
+    wide = fit_within(frame, 4 / 3)                                       # a landscape photo
+    w, h = wide[1][0] - wide[0][0], wide[3][1] - wide[0][1]
+    assert abs(w - 900) < 1e-6 and abs(w / h - 4 / 3) < 1e-6
+    assert fit_within(frame, 9 / 16) is frame                             # same shape: unchanged

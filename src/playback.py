@@ -3,6 +3,7 @@ import json
 import threading
 import time
 
+import cv2
 import numpy as np
 
 from .homography import (
@@ -11,6 +12,7 @@ from .homography import (
 from .renderer import Layer
 from .rules import effective_frame
 from .sources import create_source, source_config
+from .sources.base import StaticSource
 
 
 DIM_CHECK_SECONDS = 60
@@ -73,6 +75,54 @@ def frame_canvas_corners(cfg, S, portrait=False):
             rect = cfg['rect_portrait']
         return rect_to_canvas_corners(rect, S)
     return cfg['corners']
+
+
+FIT_TOLERANCE = 0.02   # aspect ratios this close count as the same: no bars
+
+# Drawn behind content that's shown at its own shape, so the rest of its frame is black.
+_BLACK = None
+
+
+def _black_source():
+    global _BLACK
+    if _BLACK is None:
+        _BLACK = StaticSource(np.array([[[0, 0, 0, 255]]], np.uint8))
+    return _BLACK
+
+
+def fit_within(corners, content_aspect):
+    """
+    The largest centred quad with the content's aspect ratio (width/height)
+    inside a frame's quad, following the frame's perspective. The frame's
+    aspect is judged from its size in canvas pixels.
+    """
+    frame_w, frame_h = quad_footprint(array_to_corners(corners))
+    if frame_w <= 0 or frame_h <= 0 or content_aspect <= 0:
+        return corners
+    frame_aspect = frame_w / frame_h
+    if abs(content_aspect / frame_aspect - 1) < FIT_TOLERANCE:
+        return corners
+    if content_aspect > frame_aspect:      # wider: full width, bars above and below
+        u0, u1 = 0.0, 1.0
+        half = frame_aspect / content_aspect / 2
+        v0, v1 = 0.5 - half, 0.5 + half
+    else:                                  # taller: full height, bars at the sides
+        half = content_aspect / frame_aspect / 2
+        u0, u1 = 0.5 - half, 0.5 + half
+        v0, v1 = 0.0, 1.0
+    to_frame = cv2.getPerspectiveTransform(
+        np.float32([[0, 0], [1, 0], [1, 1], [0, 1]]), np.float32(corners))
+    return apply_homography(to_frame, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
+
+
+def content_aspect(source, data):
+    """Width/height of what a source shows (its crop of its latest image), or None."""
+    if data is None:
+        return None
+    h, w = data[1].shape[:2]
+    x0, y0, x1, y1 = source.crop
+    width, height = (x1 - x0) * w, (y1 - y0) * h
+    return width / height if height > 0 else None
 
 
 def _cfg_key(cfg):
@@ -315,7 +365,14 @@ class Playback:
             state.step(now, dt, show)
             if state.alpha <= 0.0:
                 continue
-            layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(state.corners),
+            corners = state.corners
+            if getattr(source, 'keep_aspect', False):
+                fitted = fit_within(corners, content_aspect(source, source.latest()) or 0)
+                if fitted is not corners:
+                    layers.append(Layer(key=f"{frame_id}:backing", corners=array_to_corners(corners),
+                                        source=_black_source(), alpha=state.alpha))
+                    corners = fitted
+            layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(corners),
                                 source=source, alpha=state.alpha, crop=source.crop))
         layers.extend(overlay)
 

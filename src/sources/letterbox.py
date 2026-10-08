@@ -97,6 +97,9 @@ class LetterboxedV4L2Source(V4L2Source):
     """A capture source that crops black bars and reports portrait/landscape content."""
 
     ANALYZE_SECONDS = 0.5
+    # Shown at its own shape within its frame (black around it), never stretched:
+    # a cast's content can be any shape once its black bars are cropped.
+    keep_aspect = True
 
     def __init__(self, cfg):
         super().__init__(cfg)

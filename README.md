@@ -15,7 +15,7 @@ Built for this setup:
 
 - **Screen detection:** the webcam finds the screen, and frames are laid out as rectangles on it. The keystone correction is exact (per-pixel perspective warp). If the projector moves, re-run detection and the layout stays put.
 - **Frame types:** video/image files, text, weather (with icons, for your local area), a live camera, Chromecast and AirPlay.
-- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, and portrait content switches to a portrait layout. Cast audio plays through the projector. AirPlay is for screen mirroring: a video app that hands a video off to AirPlay isn't supported, its sound still plays, and the AirPlay frame suggests Screen Mirroring or the Chromecast for the video.
+- **Casting:** a Chromecast or AirPlay frame appears when someone starts casting and hides when they stop. Black bars are cropped, portrait content switches to a portrait layout, and the content keeps its own shape inside its frame (black fills the rest) instead of being stretched. Cast audio plays through the projector. AirPlay is for screen mirroring: a video app that hands a video off to AirPlay isn't supported, its sound still plays, and the AirPlay frame suggests Screen Mirroring or the Chromecast for the video.
 - **Frame rules:** frames can change while something else is happening, for example "shrink the weather while casting" or "hide the message at night".
 - **Live config:** edit `config/frames.json` over SSH and the running display picks up the change.
 - **Power:** turning the wall switch off turns the projector off, then shuts the Pi down cleanly. Turning it on brings everything back up.
