@@ -209,7 +209,9 @@ class AnimatedTextSource(TextSource):
     """
 
     FPS = 24           # match typical video; each frame is a texture upload
-    SHRINK = 0.8          # text fills this much of the frame, leaving room to wave and glow
+    # Text fills this much of the frame: room above and below for the wave
+    # and glow, only a little at the sides for the glow.
+    SHRINK_X, SHRINK_Y = 0.94, 0.8
 
     def __init__(self, cfg, clock=time.monotonic):
         super().__init__(cfg)
@@ -244,7 +246,7 @@ class AnimatedTextSource(TextSource):
         color, _ = self.colors()
         glow_color = parse_color(self.cfg.get('glow_color'), (255, 200, 90, 255))
         pad = int(min(w, h) * 0.06)
-        inner_w, inner_h = max(1, int((w - 2 * pad) * self.SHRINK)), max(1, int((h - 2 * pad) * self.SHRINK))
+        inner_w, inner_h = max(1, int((w - 2 * pad) * self.SHRINK_X)), max(1, int((h - 2 * pad) * self.SHRINK_Y))
         _, laid_out = fit_rows(self.rows(), self._fonts, inner_w, inner_h, wrap=self.cfg.get('wrap', True))
         total = sum(font.get_linesize() * len(lines) for font, lines in laid_out)
         y = (h - total) // 2
