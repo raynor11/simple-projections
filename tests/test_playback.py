@@ -257,3 +257,11 @@ def test_decode_size_fits_the_frame_within_the_pixel_budget():
     # Already small enough: native size.
     assert decode_size((640, 360), (1920, 1080)) is None
     assert 'width=712,height=1264' in hardware_pipelines('/m/v.mov', (712, 1264))[0]
+
+
+def test_tall_portrait_video_skips_the_isp():
+    from src.sources.file import hardware_pipelines, isp_can_scale
+    assert not isp_can_scale((1080, 1920))     # trips the bcm2835-codec driver
+    assert isp_can_scale((1920, 1080)) and isp_can_scale((720, 1080))
+    pipes = hardware_pipelines('/m/v.mov', (720, 1280), isp=False)
+    assert len(pipes) == 1 and 'v4l2convert' not in pipes[0] and 'videoscale' in pipes[0]

@@ -43,7 +43,18 @@ def decode_size(native, target, max_pixels=MAX_VIDEO_PIXELS):
     return max(2, int(w * scale) // 2 * 2), max(2, int(h * scale) // 2 * 2)
 
 
-def hardware_pipelines(path, size=None):
+def isp_can_scale(native):
+    """
+    Whether the Pi's ISP (v4l2convert) can take this video. Tall portrait
+    frames (e.g. 1080x1920) make the bcm2835-codec driver fail with "buffer
+    size mismatch", and the failed attempts can leave the hardware decoder
+    unable to allocate memory until a reboot, so they skip it.
+    """
+    w, h = native
+    return not (h > w and h > 1088)
+
+
+def hardware_pipelines(path, size=None, isp=True):
     """
     GStreamer pipelines that decode H.264 on the Raspberry Pi 4's hardware
     decoder (v4l2h264dec), best first: colour conversion (and scaling to
@@ -56,29 +67,43 @@ def hardware_pipelines(path, size=None):
     src = f'filesrc location="{path}" ! {demux} ! h264parse ! v4l2h264dec'
     caps = 'video/x-raw,format=BGR' + (f',width={size[0]},height={size[1]}' if size else '')
     sink = f'{caps} ! appsink drop=true max-buffers=2 sync=false'
-    return [f'{src} ! v4l2convert ! {sink}', f'{src} ! videoconvert ! videoscale ! {sink}']
+    cpu = f'{src} ! videoconvert ! videoscale ! {sink}'
+    return [f'{src} ! v4l2convert ! {sink}', cpu] if isp else [cpu]
 
 
-def open_video(path, size=None):
+HW_ISP = 'hardware (v4l2h264dec + v4l2convert)'
+HW_CPU = 'hardware (v4l2h264dec + videoconvert)'
+SOFTWARE = 'software (FFmpeg)'
+
+
+def open_video(path, size=None, native=None, only=None):
     """
     (capture, decoder name). Uses the Pi's hardware H.264 decoder when
     OpenCV has GStreamer and the file is H.264; otherwise FFmpeg in
     software. PM_VIDEO_DECODER=software forces the fallback (to compare).
+    `only` reopens with a method that already worked for this file, so a
+    looping video doesn't retry ones that failed. `size` scales on the
+    hardware paths; the caller scales software frames.
     """
     want_hw = (os.environ.get('PM_VIDEO_DECODER', 'auto') != 'software'
                and sys.platform.startswith('linux') and opencv_has_gstreamer())
-    if want_hw:
-        for name, pipeline in zip(('hardware (v4l2h264dec + v4l2convert)',
-                                   'hardware (v4l2h264dec + videoconvert)'), hardware_pipelines(path, size)):
+    isp = native is None or isp_can_scale(native)
+    if want_hw and only != SOFTWARE:
+        pipelines = hardware_pipelines(path, size, isp)
+        names = (HW_ISP, HW_CPU) if isp else (HW_CPU,)
+        for name, pipeline in zip(names, pipelines):
+            if only is not None and name != only:
+                continue
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            if only is not None and cap.isOpened():
+                return cap, name
             if cap.isOpened():
                 ok, _ = cap.read()     # a pipeline can open but fail to negotiate; check a frame decodes
                 if ok:
                     cap.release()
-                    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER), \
-                        name + (f' at {size[0]}x{size[1]}' if size else '')
+                    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER), name
             cap.release()
-    return cv2.VideoCapture(str(path)), 'software (FFmpeg)'
+    return cv2.VideoCapture(str(path)), SOFTWARE
 
 
 def video_info(path):
@@ -154,11 +179,13 @@ class VideoFileSource(ThreadedSource):
         for _ in range(20):
             if self.target_size or self._stop.wait(0.05):
                 break
-        cap, decoder = open_video(path, decode_size(native, self.target_size))
+        size = decode_size(native, self.target_size)
+        cap, decoder = open_video(path, size, native)
         if not cap.isOpened():
             print(f"Failed to open video: {path}")
             return
-        print(f"Video {Path(path).name}: {decoder} decoding")
+        print(f"Video {Path(path).name}: {decoder} decoding"
+              + (f", at {size[0]}x{size[1]}" if size else ""))
         next_time = time.monotonic()
         ring, shrink_ring = FrameRing(), FrameRing()
         try:
@@ -167,16 +194,26 @@ class VideoFileSource(ThreadedSource):
                 if not ok:
                     # Loop back to the start at end of file. A GStreamer pipeline
                     # can't rewind reliably, so it's reopened instead.
-                    if decoder.startswith('software'):
+                    if decoder == SOFTWARE:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     else:
                         cap.release()
-                        cap, _ = open_video(path, decode_size(native, self.target_size))
+                        cap, _ = open_video(path, size, native, only=decoder)
                     ok, frame = cap.read(ring.next())
                     if not ok:
                         print(f"Video produced no frames: {path}")
                         return
-                self._publish(self._shrink_for_target(ring.filled(frame), shrink_ring))
+                frame = ring.filled(frame)
+                if decoder == SOFTWARE and size and frame.shape[1::-1] != size:
+                    # The hardware paths scale on the GPU side; here it's the CPU,
+                    # still far cheaper than uploading the full-size frame.
+                    dst = shrink_ring.next()
+                    if dst is None or dst.shape[1::-1] != size:
+                        dst = None
+                    frame = shrink_ring.filled(cv2.resize(frame, size, dst=dst, interpolation=cv2.INTER_AREA))
+                else:
+                    frame = self._shrink_for_target(frame, shrink_ring)
+                self._publish(frame)
 
                 next_time += interval
                 delay = next_time - time.monotonic()
