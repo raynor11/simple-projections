@@ -47,6 +47,9 @@ HOURS_LOG_SECONDS = 24 * 3600      # log the light source hours once a day
 FAILED = object()
 
 
+
+SETUP_KEYS = ('input', 'aspect', 'volume')   # what _setup sends
+
 class Controller:
     def __init__(self, config, clock=time.monotonic, ups_reader=read_ups_status, shutdown=request_shutdown):
         self.clock = clock
@@ -63,14 +66,24 @@ class Controller:
         self.apply_config(config)
 
     def apply_config(self, config):
+        """
+        Use a (re)loaded config. Only what actually changed is re-sent: the
+        file also changes for frame edits, and re-selecting the input makes
+        the projector blank briefly while it re-syncs.
+        """
         cfg = config['projector']
         old = getattr(self, 'cfg', None)
+        first = old is None
+        old = old or {}
+        location_changed = first or config.get('location') != self.location_cfg
         self.config, self.cfg = config, cfg
-        self.location_cfg = config.get('location')
-        self.location = None
-        self._location_tried_at = None
+        if location_changed:
+            self.location_cfg = config.get('location')
+            self.location = None
+            self._location_tried_at = None
         serial_keys = ('serial', 'baud')
-        if self.projector is None or any(cfg.get(k) != old.get(k) for k in serial_keys):
+        reconnected = self.projector is None or any(cfg.get(k) != old.get(k) for k in serial_keys)
+        if reconnected:
             if self.projector:
                 self.projector.close()
             self.projector = from_config(cfg)
@@ -80,8 +93,10 @@ class Controller:
         else:
             self.sequencer.debounce_s = cfg.get('power_loss_debounce_s', 10)
             self.sequencer.projector_off_timeout_s = cfg.get('projector_off_timeout_s', 90)
-        self.mode_sent = None   # re-apply brightness and setup with the new settings
-        self.needs_setup = True
+        if first or location_changed or cfg.get('brightness') != old.get('brightness'):
+            self.mode_sent = None   # re-apply brightness with the new settings
+        if first or reconnected or any(cfg.get(k) != old.get(k) for k in SETUP_KEYS):
+            self.needs_setup = True
 
     def _log_error(self, what, error):
         message = f"{what}: {error}"

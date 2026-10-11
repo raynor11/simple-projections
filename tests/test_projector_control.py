@@ -129,3 +129,25 @@ def test_idle_steps_do_not_query_the_projector(monkeypatch):
         state['t'] = t
         c.step()
     assert queries == []                                  # setup done, mode current, hours logged
+
+
+def test_config_reload_resends_only_what_changed(monkeypatch):
+    import copy
+    c, projector, state = make_controller(monkeypatch)
+    c.step()
+    sent = list(projector.calls)
+    # A frame edit rewrites the file but leaves the projector settings alone:
+    # re-selecting the input would blank the picture while the projector re-syncs.
+    config = copy.deepcopy(c.config)
+    config['frames'] = [{'id': 'new'}]
+    c.apply_config(config)
+    state['t'] = 2
+    c.step()
+    assert projector.calls == sent
+    # Changing the input does re-send the setup (but not the brightness).
+    config = copy.deepcopy(config)
+    config['projector']['input'] = 'hdmi2'
+    c.apply_config(config)
+    state['t'] = 4
+    c.step()
+    assert projector.calls[len(sent):] == ['input:hdmi2', 'aspect:16:9']
