@@ -245,3 +245,15 @@ def test_fit_within_keeps_the_content_shape():
     w, h = wide[1][0] - wide[0][0], wide[3][1] - wide[0][1]
     assert abs(w - 900) < 1e-6 and abs(w / h - 4 / 3) < 1e-6
     assert fit_within(frame, 9 / 16) is frame                             # same shape: unchanged
+
+
+def test_decode_size_fits_the_frame_within_the_pixel_budget():
+    from src.sources.file import decode_size, hardware_pipelines
+    # A portrait 1080x1920 video filling a ~920x1690 frame: capped near 720p's pixel count.
+    w, h = decode_size((1080, 1920), (920, 1690))
+    assert w * h <= 1280 * 720 and abs(w / h - 1080 / 1920) < 0.01 and w % 2 == 0
+    # A small frame: just big enough to cover it.
+    assert decode_size((1920, 1080), (480, 270)) == (480, 270)
+    # Already small enough: native size.
+    assert decode_size((640, 360), (1920, 1080)) is None
+    assert 'width=712,height=1264' in hardware_pipelines('/m/v.mov', (712, 1264))[0]

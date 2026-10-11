@@ -208,7 +208,7 @@ class AnimatedTextSource(TextSource):
     moves and fades them, so it stays cheap on the Pi.
     """
 
-    FPS = 30
+    FPS = 24           # match typical video; each frame is a texture upload
     SHRINK = 0.8          # text fills this much of the frame, leaving room to wave and glow
 
     def __init__(self, cfg, clock=time.monotonic):

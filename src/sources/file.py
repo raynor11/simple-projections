@@ -19,22 +19,47 @@ def opencv_has_gstreamer():
                for line in cv2.getBuildInformation().splitlines())
 
 
-def hardware_pipelines(path):
+# Uploading frames to the GPU is the Pi's bottleneck (~150 MB/s), so videos
+# are decoded no bigger than about 720p's pixel count: a 1080x1920 frame is
+# 6 MB, 24 times a second.
+MAX_VIDEO_PIXELS = 1280 * 720
+
+
+def decode_size(native, target, max_pixels=MAX_VIDEO_PIXELS):
+    """
+    (width, height) to decode a native-size video at: just big enough to
+    cover its frame's on-canvas footprint, within max_pixels, never bigger
+    than the video, keeping its shape. None means native size.
+    """
+    w, h = native
+    if w <= 0 or h <= 0:
+        return None
+    scale = 1.0
+    if target:
+        scale = min(1.0, max(target[0] / w, target[1] / h))
+    scale = min(scale, (max_pixels / (w * h)) ** 0.5)
+    if scale >= 0.98:
+        return None
+    return max(2, int(w * scale) // 2 * 2), max(2, int(h * scale) // 2 * 2)
+
+
+def hardware_pipelines(path, size=None):
     """
     GStreamer pipelines that decode H.264 on the Raspberry Pi 4's hardware
-    decoder (v4l2h264dec), best first: colour conversion on the ISP
-    (v4l2convert), then on the CPU (videoconvert). Empty if the container
-    isn't one we can demux this way.
+    decoder (v4l2h264dec), best first: colour conversion (and scaling to
+    `size`) on the ISP (v4l2convert), then on the CPU (videoconvert). Empty if
+    the container isn't one we can demux this way.
     """
     demux = DEMUXERS.get(Path(path).suffix.lower())
     if demux is None:
         return []
     src = f'filesrc location="{path}" ! {demux} ! h264parse ! v4l2h264dec'
-    sink = 'video/x-raw,format=BGR ! appsink drop=true max-buffers=2 sync=false'
-    return [f'{src} ! v4l2convert ! {sink}', f'{src} ! videoconvert ! {sink}']
+    caps = 'video/x-raw,format=BGR' + (f',width={size[0]},height={size[1]}' if size else '')
+    sink = f'{caps} ! appsink drop=true max-buffers=2 sync=false'
+    return [f'{src} ! v4l2convert ! {sink}', f'{src} ! videoconvert ! videoscale ! {sink}']
 
 
-def open_video(path):
+def open_video(path, size=None):
     """
     (capture, decoder name). Uses the Pi's hardware H.264 decoder when
     OpenCV has GStreamer and the file is H.264; otherwise FFmpeg in
@@ -44,23 +69,32 @@ def open_video(path):
                and sys.platform.startswith('linux') and opencv_has_gstreamer())
     if want_hw:
         for name, pipeline in zip(('hardware (v4l2h264dec + v4l2convert)',
-                                   'hardware (v4l2h264dec + videoconvert)'), hardware_pipelines(path)):
+                                   'hardware (v4l2h264dec + videoconvert)'), hardware_pipelines(path, size)):
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
             if cap.isOpened():
                 ok, _ = cap.read()     # a pipeline can open but fail to negotiate; check a frame decodes
                 if ok:
                     cap.release()
-                    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER), name
+                    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER), \
+                        name + (f' at {size[0]}x{size[1]}' if size else '')
             cap.release()
     return cv2.VideoCapture(str(path)), 'software (FFmpeg)'
 
 
-def video_fps(path):
-    """The file's frame rate, read from its header with FFmpeg (GStreamer appsinks often don't report it)."""
+def video_info(path):
+    """
+    (frame rate, (width, height)), read from the file's header with FFmpeg
+    (GStreamer appsinks often don't report them).
+    """
     cap = cv2.VideoCapture(str(path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     cap.release()
-    return min(max(fps, 1), 60)
+    return min(max(fps, 1), 60), size
+
+
+def video_fps(path):
+    return video_info(path)[0]
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
 
 
@@ -114,8 +148,13 @@ class VideoFileSource(ThreadedSource):
 
     def _run(self):
         path = self.cfg['path']
-        interval = 1.0 / video_fps(path)
-        cap, decoder = open_video(path)
+        fps, native = video_info(path)
+        interval = 1.0 / fps
+        # The frame's on-screen size arrives just after start(); wait briefly for it.
+        for _ in range(20):
+            if self.target_size or self._stop.wait(0.05):
+                break
+        cap, decoder = open_video(path, decode_size(native, self.target_size))
         if not cap.isOpened():
             print(f"Failed to open video: {path}")
             return
@@ -132,7 +171,7 @@ class VideoFileSource(ThreadedSource):
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     else:
                         cap.release()
-                        cap, _ = open_video(path)
+                        cap, _ = open_video(path, decode_size(native, self.target_size))
                     ok, frame = cap.read(ring.next())
                     if not ok:
                         print(f"Video produced no frames: {path}")
