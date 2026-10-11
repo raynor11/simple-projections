@@ -34,8 +34,8 @@ def create_source(src_cfg, context=None):
         from .v4l2 import V4L2Source
         return V4L2Source(src_cfg)
     if kind == 'text':
-        from .text import TextSource
-        return TextSource(src_cfg)
+        from .text import AnimatedTextSource, TextSource
+        return AnimatedTextSource(src_cfg) if src_cfg.get('animation') else TextSource(src_cfg)
     if kind == 'weather':
         from .weather import WeatherSource
         return WeatherSource(src_cfg, location=context.get('location'))

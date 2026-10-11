@@ -163,7 +163,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 | Source `type` | Fields |
 |---|---|
 | `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image |
-| `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf). The text auto-sizes to fill the frame. |
+| `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf), `wrap` (default `true`; `false` keeps each line whole). The text auto-sizes to fill the frame. `animation`: `["wave", "glow"]` (either or both) makes the letters ripple and a soft glow pulse behind them; tune with `glow_color`, `wave_height` (share of a line, default 0.12), `wave_seconds` (1.8) and `glow_seconds` (2.4). |
 | `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. |
 | `camera` | `device`, `width`, `height`, `fps` |
 | `chromecast` | `device` (capture card), `cast_name`, `width`, `height`, `audio_device`, `audio_delay_ms` (lip-sync, default 120), `grace_seconds` (default 3), `paused_hide_seconds` (default 60: hide after the video has been paused or stopped this long, since "stop casting" in many apps leaves the app open on the Chromecast), `idle_app_ids` |
