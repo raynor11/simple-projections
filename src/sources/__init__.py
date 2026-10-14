@@ -36,6 +36,9 @@ def create_source(src_cfg, context=None):
     if kind == 'text':
         from .text import AnimatedTextSource, TextSource
         return AnimatedTextSource(src_cfg) if src_cfg.get('animation') else TextSource(src_cfg)
+    if kind == 'clock':
+        from .clock import ClockSource
+        return ClockSource(src_cfg)
     if kind == 'weather':
         from .weather import WeatherSource
         return WeatherSource(src_cfg, location=context.get('location'))

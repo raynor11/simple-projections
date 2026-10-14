@@ -100,6 +100,7 @@ SOURCE_REQUIRED = {
     "file": ("path",),
     "text": ("text",),
     "weather": (),
+    "clock": (),
     "camera": ("device",),
     "chromecast": ("device", "cast_name"),
     "airplay": ("device",),

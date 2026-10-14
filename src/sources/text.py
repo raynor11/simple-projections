@@ -195,6 +195,21 @@ class TextSource(Source):
         return super().latest()
 
 
+def blurred_copy(alpha, radius, color, strength):
+    """
+    A soft glow or shadow: a blurred, coloured copy of an alpha mask (h, w),
+    padded by radius on every side, as a pygame surface.
+    """
+    padded = np.pad(alpha, radius)
+    blur = cv2.GaussianBlur(padded.astype(np.float32), (0, 0), max(1.0, radius / 2.5))
+    a = np.clip(blur * strength, 0, 255).astype(np.uint8)
+    rgba = np.empty(a.shape + (4,), np.uint8)
+    rgba[..., :3] = color[:3]
+    rgba[..., 3] = a
+    h, w = a.shape
+    return pygame.image.frombuffer(rgba.tobytes(), (w, h), 'RGBA').copy()
+
+
 class AnimatedTextSource(TextSource):
     """
     Text that moves, for occasions like a welcome-home message. "animation"
@@ -229,17 +244,6 @@ class AnimatedTextSource(TextSource):
         value = self.cfg.get('animation') or []
         return {value} if isinstance(value, str) else set(value)
 
-    def _blurred(self, alpha, radius, color, strength):
-        """A blurred, coloured copy of a glyph's alpha, padded by radius on every side."""
-        padded = np.pad(alpha, radius)
-        blur = cv2.GaussianBlur(padded.astype(np.float32), (0, 0), max(1.0, radius / 2.5))
-        a = np.clip(blur * strength, 0, 255).astype(np.uint8)
-        rgba = np.empty(a.shape + (4,), np.uint8)
-        rgba[..., :3] = color[:3]
-        rgba[..., 3] = a
-        h, w = a.shape
-        return pygame.image.frombuffer(rgba.tobytes(), (w, h), 'RGBA').copy()
-
     def _build(self, size):
         """Lay the text out once and pre-render each letter with its glow and shadow."""
         w, h = size
@@ -268,8 +272,8 @@ class AnimatedTextSource(TextSource):
                         'img': img,
                         'pos': (x0 + font.size(line[:i])[0], y),
                         'radius': radius,
-                        'glow': self._blurred(alpha, radius, glow_color, 2.2),
-                        'shadow': self._blurred(alpha, radius, (0, 0, 0), 1.6),
+                        'glow': blurred_copy(alpha, radius, glow_color, 2.2),
+                        'shadow': blurred_copy(alpha, radius, (0, 0, 0), 1.6),
                     })
                 y += font.get_linesize()
         self._glyphs, self._size, self._line_height = glyphs, size, line_height
