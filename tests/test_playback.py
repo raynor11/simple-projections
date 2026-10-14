@@ -282,3 +282,19 @@ def test_quarter_turned_sources_get_a_swapped_target_size():
     s = Source({'type': 'file', 'rotate': 270})
     s.set_target_size(918, 1833)
     assert s.target_size == (1833, 918)
+
+
+def test_hidden_video_pauses_after_a_moment(monkeypatch, tmp_path):
+    from src.sources import file as file_mod
+    clock = [100.0]
+    monkeypatch.setattr(file_mod.time, 'monotonic', lambda: clock[0])
+    video = tmp_path / 'clip.mp4'
+    video.write_bytes(b'')
+    src = file_mod.VideoFileSource({'type': 'file', 'path': str(video)})
+    src.set_shown(False)
+    assert src._shown.is_set()               # a brief hide (e.g. a rule flicker) doesn't pause
+    clock[0] += 2.5
+    src.set_shown(False)
+    assert not src._shown.is_set()           # hidden long enough: decoding stops
+    src.set_shown(True)
+    assert src._shown.is_set()

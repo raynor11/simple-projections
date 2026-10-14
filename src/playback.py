@@ -368,6 +368,7 @@ class Playback:
             if source is None:
                 continue
             show = source.visible and not cfg.get('hidden', False)
+            source.set_shown(show)
             if first_tick and show:
                 state.alpha = 1.0   # frames showing at startup appear immediately
             corners_key = (id(cfg), source.orientation, id(S))

@@ -87,6 +87,13 @@ class Source:
         """Sub-rect of the image to show, as normalized (x0, y0, x1, y1)."""
         return FULL_CROP
 
+    def set_shown(self, shown):
+        """
+        Told every tick whether the frame is on screen (rules can hide it).
+        Sources that cost something to keep running may pause meanwhile.
+        """
+        pass
+
     def set_target_size(self, width, height):
         """
         The frame's on-canvas footprint in pixels; sources may render/downscale

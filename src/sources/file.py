@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -164,9 +165,36 @@ class VideoFileSource(ThreadedSource):
     A looping video, decoded in a background thread and paced to its frame
     rate. Frames are published in OpenCV's BGR order at their native size:
     the GPU swaps the channels and scales them while drawing.
+
+    While its frame is hidden (e.g. by a rule while casting) for more than
+    PAUSE_AFTER_SECONDS, decoding stops and the decoder is released, so it
+    takes nothing from the cast; it carries on from the start when shown.
     """
 
     pixel_format = 'BGR'
+    PAUSE_AFTER_SECONDS = 2.0
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self._shown = threading.Event()
+        self._shown.set()
+        self._hidden_since = None
+
+    def set_shown(self, shown):
+        if shown:
+            self._hidden_since = None
+            self._shown.set()
+        elif self._hidden_since is None:
+            self._hidden_since = time.monotonic()
+        elif self._shown.is_set() and time.monotonic() - self._hidden_since >= self.PAUSE_AFTER_SECONDS:
+            self._shown.clear()
+
+    def _wait_until_shown(self):
+        """Block (decoder released) while hidden. Returns False if the source is stopping."""
+        while not self._shown.is_set():
+            if self._stop.wait(0.2):
+                return False
+        return True
 
     def update(self, cfg):
         return cfg.get('path') == self.cfg.get('path')
@@ -190,6 +218,14 @@ class VideoFileSource(ThreadedSource):
         ring, shrink_ring = FrameRing(), FrameRing()
         try:
             while not self._stop.is_set():
+                if not self._shown.is_set():
+                    cap.release()
+                    print(f"Video {Path(path).name}: paused while hidden")
+                    if not self._wait_until_shown():
+                        return
+                    cap, _ = open_video(path, size, native, only=decoder)
+                    next_time = time.monotonic()
+                    print(f"Video {Path(path).name}: resumed")
                 ok, frame = cap.read(ring.next())
                 if not ok:
                     # Loop back to the start at end of file. A GStreamer pipeline
