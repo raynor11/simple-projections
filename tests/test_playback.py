@@ -194,7 +194,7 @@ def test_hardware_pipelines_and_fallback(monkeypatch):
     import src.sources.file as file_mod
     pipes = file_mod.hardware_pipelines('/media/clip.mp4')
     assert pipes[0].startswith('filesrc location="/media/clip.mp4" ! qtdemux ! h264parse ! v4l2h264dec ! v4l2convert')
-    assert 'videoconvert' in pipes[1] and pipes[0].endswith('appsink drop=true max-buffers=2 sync=false')
+    assert 'videoconvert' in pipes[1] and pipes[0].endswith('appsink drop=false max-buffers=2 sync=false')
     assert file_mod.hardware_pipelines('/media/clip.avi') == []
 
     opened = []

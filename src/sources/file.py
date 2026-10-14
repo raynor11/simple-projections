@@ -67,7 +67,10 @@ def hardware_pipelines(path, size=None, isp=True):
         return []
     src = f'filesrc location="{path}" ! {demux} ! h264parse ! v4l2h264dec'
     caps = 'video/x-raw,format=BGR' + (f',width={size[0]},height={size[1]}' if size else '')
-    sink = f'{caps} ! appsink drop=true max-buffers=2 sync=false'
+    # drop=false: the decoder outruns our frame-rate pacing, and dropping
+    # buffers would skip frames and play the video fast. A full appsink
+    # blocks the decoder instead.
+    sink = f'{caps} ! appsink drop=false max-buffers=2 sync=false'
     cpu = f'{src} ! videoconvert ! videoscale ! {sink}'
     return [f'{src} ! v4l2convert ! {sink}', cpu] if isp else [cpu]
 
