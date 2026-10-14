@@ -265,3 +265,20 @@ def test_tall_portrait_video_skips_the_isp():
     assert isp_can_scale((1920, 1080)) and isp_can_scale((720, 1080))
     pipes = hardware_pipelines('/m/v.mov', (720, 1280), isp=False)
     assert len(pipes) == 1 and 'v4l2convert' not in pipes[0] and 'videoscale' in pipes[0]
+
+
+def test_rotate_corners_turns_the_image_clockwise():
+    from src.playback import rotate_corners
+    frame = {'tl': 'A', 'tr': 'B', 'br': 'C', 'bl': 'D'}
+    assert rotate_corners(frame, 0) is frame
+    # A video encoded turned 90 degrees clockwise is drawn upright with 270:
+    # its top-left (the upright picture's bottom-left) goes to the frame's bottom-left.
+    assert rotate_corners(frame, 270) == {'tl': 'D', 'tr': 'A', 'br': 'B', 'bl': 'C'}
+    assert rotate_corners(frame, 90) == {'tl': 'B', 'tr': 'C', 'br': 'D', 'bl': 'A'}
+
+
+def test_quarter_turned_sources_get_a_swapped_target_size():
+    from src.sources.base import Source
+    s = Source({'type': 'file', 'rotate': 270})
+    s.set_target_size(918, 1833)
+    assert s.target_size == (1833, 918)

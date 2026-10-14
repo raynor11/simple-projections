@@ -117,6 +117,8 @@ def _check_source(source, what):
             raise ValueError(f"{what} {kind} source missing key: {key}")
     if source.get("decoder", "opencv") not in ("opencv", "gstreamer"):
         raise ValueError(f"{what} decoder must be \"opencv\" or \"gstreamer\"")
+    if source.get("rotate", 0) not in (0, 90, 180, 270):
+        raise ValueError(f"{what} rotate must be 0, 90, 180 or 270")
 
 
 def _check_projector(projector):

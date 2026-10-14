@@ -115,6 +115,18 @@ def fit_within(corners, content_aspect):
     return apply_homography(to_frame, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
 
 
+def rotate_corners(corners, degrees):
+    """
+    Frame corners for drawing a source's image turned `degrees` clockwise:
+    the image's top-left goes to the frame's corner that many quarter-turns
+    round (e.g. 270 draws a sideways-encoded portrait video upright).
+    """
+    turns = (int(degrees) // 90) % 4
+    if turns == 0:
+        return corners
+    return {CORNER_ORDER[i]: corners[CORNER_ORDER[(i + turns) % 4]] for i in range(4)}
+
+
 def content_aspect(source, data):
     """Width/height of what a source shows (its crop of its latest image), or None."""
     if data is None:
@@ -372,7 +384,8 @@ class Playback:
                     layers.append(Layer(key=f"{frame_id}:backing", corners=array_to_corners(corners),
                                         source=_black_source(), alpha=state.alpha))
                     corners = fitted
-            layers.append(Layer(key=f"{frame_id}:{id(source)}", corners=array_to_corners(corners),
+            layers.append(Layer(key=f"{frame_id}:{id(source)}",
+                                corners=rotate_corners(array_to_corners(corners), source.cfg.get('rotate', 0)),
                                 source=source, alpha=state.alpha, crop=source.crop))
         layers.extend(overlay)
 

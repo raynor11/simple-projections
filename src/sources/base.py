@@ -88,7 +88,13 @@ class Source:
         return FULL_CROP
 
     def set_target_size(self, width, height):
-        """The frame's on-canvas footprint in pixels; sources may render/downscale to it."""
+        """
+        The frame's on-canvas footprint in pixels; sources may render/downscale
+        to it. In the image's own orientation: swapped when the frame draws it
+        turned a quarter (source "rotate": 90 or 270).
+        """
+        if int(self.cfg.get('rotate', 0)) % 180 == 90:
+            width, height = height, width
         self.target_size = (max(1, int(width)), max(1, int(height)))
 
     # -- helpers for subclasses ----------------------------------------------

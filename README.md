@@ -162,7 +162,7 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 
 | Source `type` | Fields |
 |---|---|
-| `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image |
+| `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image. Any source can have `rotate` (`90`, `180`, `270`: drawn turned that far clockwise). On a Pi 4, encode portrait videos sideways (1920x1080) and use `"rotate": 270`: the hardware decoder and scaler handle landscape, but a tall frame falls back to slow CPU conversion. |
 | `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf), `wrap` (default `true`; `false` keeps each line whole). The text auto-sizes to fill the frame. `animation`: `["wave", "glow"]` (either or both) makes the letters ripple and a soft glow pulse behind them; tune with `glow_color`, `wave_height` (share of a line, default 0.12), `wave_seconds` (1.8) and `glow_seconds` (2.4). |
 | `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. |
 | `camera` | `device`, `width`, `height`, `fps` |
