@@ -1,5 +1,4 @@
 import random
-import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -36,10 +35,11 @@ def smoothstep(t):
 
 class ClipPlayer(ThreadedSource):
     """
-    One play of one video, no looping. The decoder opens and decodes the
-    first frame as soon as the player starts, then waits for go(): so the
-    next clip is ready the moment it's due and the cut has no gap. After the
-    last frame it holds that frame.
+    One play of one video, no looping, starting as soon as it's opened. At
+    the end it releases its decoder (sets `finished`) and holds the last
+    frame. The Pi 4's codec can't run two hardware decodes at once (it runs
+    out of memory and can hang the firmware), so a sequence only opens the
+    next clip once this one has finished.
     """
 
     pixel_format = 'BGR'
@@ -48,15 +48,8 @@ class ClipPlayer(ThreadedSource):
         super().__init__({'type': 'file', 'path': path})
         self.target_size = target_size
         self._decoders = decoders    # path -> decoder that worked, shared across plays
-        self._go = threading.Event()
-        self._at = None
         self.started_at = None       # when the first frame went on screen (monotonic)
-        self.duration = clip_info(path)[2]
-
-    def go(self, at=None):
-        """Start playing at monotonic time `at` (or as soon as ready)."""
-        self._at = at
-        self._go.set()
+        self.finished = False        # played to the end (or failed) and released the decoder
 
     def _run(self):
         path = self.cfg['path']
@@ -66,6 +59,8 @@ class ClipPlayer(ThreadedSource):
         cap, decoder = open_video(path, size, native, only=self._decoders.get(path))
         if not cap.isOpened():
             print(f"Failed to open video: {path}")
+            cap.release()
+            self.finished = True
             return
         if path not in self._decoders:
             self._decoders[path] = decoder
@@ -90,11 +85,6 @@ class ClipPlayer(ThreadedSource):
             if frame is None:
                 print(f"Video produced no frames: {path}")
                 return
-            while not self._go.wait(0.1):
-                if self._stop.is_set():
-                    return
-            if self._at is not None and self._stop.wait(max(0.0, self._at - time.monotonic())):
-                return
             self._publish(frame)
             self.started_at = next_time = time.monotonic()
             while not self._stop.is_set():
@@ -111,6 +101,7 @@ class ClipPlayer(ThreadedSource):
                 self._publish(frame)
         finally:
             cap.release()
+            self.finished = True
 
 
 class SequenceSource(Source):
@@ -118,7 +109,8 @@ class SequenceSource(Source):
     Plays named clips one after another: each plays a random number of
     times within its "repeat" range, then moves on to its "next" clip. Every
     change, including a clip repeating, fades the incoming play in over the
-    end of the outgoing one, so the seams don't jump.
+    outgoing one's held last frame, so the seams don't jump. Only one clip
+    decodes at a time (see ClipPlayer).
 
     Draws as up to two layers (see layers()), blended on the GPU. While its
     frame is hidden (e.g. while casting) for more than PAUSE_AFTER_SECONDS
@@ -179,19 +171,14 @@ class SequenceSource(Source):
             name = self.cfg['start']
             self._remaining = self._plays(name) - 1
             self._current = (name, self._new_player(name))
-            self._current[1].go()
             return
         name, player = self._current
-        if player.started_at is None:
-            return
         if self._next is None:
-            if self._remaining > 0:
-                next_name = name
-            else:
-                next_name = self.cfg['clips'][name]['next']
+            if not player.finished:
+                return
+            next_name = name if self._remaining > 0 else self.cfg['clips'][name]['next']
             self._next = (next_name, self._new_player(next_name))
-            self._next[1].go(player.started_at + max(0.0, player.duration - self.fade))
-        elif self._next_alpha(now) >= 1.0:
+        elif self._next_alpha(now) >= 1.0 or (self._next[1].finished and self._next[1].started_at is None):
             player.close()
             next_name = self._next[0]
             if next_name == name and self._remaining > 0:

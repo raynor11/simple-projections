@@ -22,25 +22,27 @@ CLIPS = {
 
 
 class FakePlayer(Source):
-    """Starts exactly when told to (or right away), lasts 8 s."""
+    """Takes OPEN_SECONDS to open, then plays 8 s and finishes."""
 
-    def __init__(self, name):
+    OPEN_SECONDS = 0.3
+
+    def __init__(self, name, now):
         super().__init__({'type': 'file'})
         self.name = name
-        self.duration = 8.0
+        self.created = now
         self.started_at = None
-        self.at = 'unset'
+        self.finished = False
         self.closed = False
 
-    def go(self, at=None):
-        self.at = at
-
     def tick(self, now):
-        if self.started_at is None and self.at != 'unset' and (self.at is None or now >= self.at):
-            self.started_at = now if self.at is None else self.at
+        if self.started_at is None and now >= self.created + self.OPEN_SECONDS:
+            self.started_at = now
+        if self.started_at is not None and now >= self.started_at + 8.0:
+            self.finished = True
 
     def close(self):
         self.closed = True
+        self.finished = True
 
 
 class Harness:
@@ -53,7 +55,7 @@ class Harness:
         self.now = 0.0
 
     def _new_player(self, name):
-        player = FakePlayer(name)
+        player = FakePlayer(name, self.now)
         self.players.append(player)
         return player
 
@@ -84,30 +86,43 @@ def test_plays_the_cycle_with_repeats_within_range():
         assert lo <= count <= hi, (name, count)
 
 
-def test_next_is_prepared_early_and_fades_in_over_the_end():
+def test_next_opens_only_after_the_current_finishes_then_fades_in():
     h = Harness(fade=0.4)
-    h.run(0.2)
+    h.run(7.0)
     first = h.players[0]
-    assert first.started_at is not None
-    assert len(h.players) == 2                      # the next play is opened right away
+    assert len(h.players) == 1                      # one decoder at a time
+    h.run(first.started_at + 8.1)
+    assert len(h.players) == 2 and first.finished
     second = h.players[1]
-    assert second.at == pytest.approx(first.started_at + 7.6)   # fade_seconds before the end
-    h.run(first.started_at + 7.8)
+    assert [l[0] for l in h.source.layers()] == [first]   # last frame held while the next opens
+    h.run(h.now + FakePlayer.OPEN_SECONDS + 0.1)
+    h.run(second.started_at + 0.2)
     layers = h.source.layers()
     assert [l[0] for l in layers] == [first, second]
     assert 0 < layers[1][1] < 1                     # mid-fade, drawn on top
-    h.run(first.started_at + 8.1)
+    h.run(second.started_at + 0.5)
     assert first.closed
     assert [l[0] for l in h.source.layers()] == [second]
 
 
-def test_no_fade_cuts_at_the_end():
+def test_no_fade_cuts_once_the_next_starts():
     h = Harness(fade=0)
-    h.run(0.2)
-    first = h.players[0]
-    assert h.players[1].at == pytest.approx(first.started_at + 8.0)
-    h.run(first.started_at + 8.1)
-    assert h.players[0].closed
+    h.run(9.0)
+    first, second = h.players[:2]
+    h.run(second.started_at + 0.1)
+    assert first.closed
+
+
+def test_a_clip_that_fails_to_open_is_skipped():
+    h = Harness()
+    h.run(8.5)
+    second = h.players[1]
+    second.tick = lambda now: None
+    second.finished = True                          # failed: never started
+    h.run(9.0)
+    assert h.players[0].closed and h.source._current[1] is second
+    h.run(9.5)
+    assert len(h.players) == 3
 
 
 def test_hidden_releases_players_and_restarts_from_the_start():
@@ -129,7 +144,7 @@ def test_playback_draws_each_part_as_a_layer(monkeypatch):
     import src.playback as playback_module
     from src.playback import Playback
 
-    a, b = FakePlayer('a'), FakePlayer('b')
+    a, b = FakePlayer('a', 0), FakePlayer('b', 0)
     for p in (a, b):
         p._publish(np.zeros((2, 2, 3), np.uint8))
 
