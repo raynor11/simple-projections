@@ -222,3 +222,6 @@ media/
 config/*.json
 !config/frames.example.json
 captures/
+
+# Claude Code: personal permission rules
+.claude/settings.local.json
