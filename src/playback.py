@@ -385,9 +385,12 @@ class Playback:
                     layers.append(Layer(key=f"{frame_id}:backing", corners=array_to_corners(corners),
                                         source=_black_source(), alpha=state.alpha))
                     corners = fitted
-            layers.append(Layer(key=f"{frame_id}:{id(source)}",
-                                corners=rotate_corners(array_to_corners(corners), source.cfg.get('rotate', 0)),
-                                source=source, alpha=state.alpha, crop=source.crop))
+            corners = rotate_corners(array_to_corners(corners), source.cfg.get('rotate', 0))
+            # A source made of several images (e.g. a sequence mid-crossfade) draws each as its own layer.
+            parts = source.layers() if hasattr(source, 'layers') else [(source, 1.0)]
+            for part, part_alpha in parts:
+                layers.append(Layer(key=f"{frame_id}:{id(part)}", corners=corners, source=part,
+                                    alpha=state.alpha * part_alpha, crop=part.crop))
         layers.extend(overlay)
 
         signature = self._signature(layers)

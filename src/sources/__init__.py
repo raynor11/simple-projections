@@ -1,4 +1,4 @@
-"""Frame content sources: files, cameras, capture cards, text, weather, casting."""
+"""Frame content sources: files, clip sequences, cameras, capture cards, text, weather, casting."""
 
 import cv2
 
@@ -30,6 +30,9 @@ def create_source(src_cfg, context=None):
     if kind == 'file':
         from .file import create_file_source
         return create_file_source(src_cfg)
+    if kind == 'sequence':
+        from .sequence import SequenceSource
+        return SequenceSource(src_cfg)
     if kind == 'camera':
         from .v4l2 import V4L2Source
         return V4L2Source(src_cfg)

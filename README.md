@@ -162,7 +162,8 @@ A webcam aimed at the screen will show the projection itself in its camera frame
 
 | Source `type` | Fields |
 |---|---|
-| `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image. Any source can have `rotate` (`90`, `180`, `270`: drawn turned that far clockwise). On a Pi 4, encode portrait videos sideways (1920x1080) and use `"rotate": 270`: the hardware decoder and scaler handle landscape, but a tall frame falls back to slow CPU conversion. |
+| `file` | `path` to a video (mp4/mov/avi/mkv/webm; loops) or an image. Any source can have `rotate` (`90`, `180`, `270`: drawn turned that far clockwise). On a Pi 4, encode portrait videos sideways (1920x1080, `ROTATE=cw scripts/prepare_media.sh`) and use `"rotate": 270`: the hardware decoder and scaler handle landscape, but a tall frame falls back to slow CPU conversion. |
+| `sequence` | Plays named videos one after another. `clips`: `{"name": {"path": ..., "repeat": [min, max], "next": "other"}}`: each clip plays a random number of times within `repeat` (a number, or left out for once), then moves on to `next`. `start` names the first clip. Every change, a repeat included, fades the incoming video in over the last `fade_seconds` (default `0.4`) of the outgoing one, and the next video is opened ahead of time, so there's no gap. `rotate` applies to all the clips. Hidden for more than 2 s (e.g. while casting), it releases its decoders and starts over from `start` when shown. |
 | `text` | `text` (`\n` for line breaks), `color`, `background` (`#rrggbbaa`), `align` (`left`/`center`/`right`), `font` (path to a .ttf), `wrap` (default `true`; `false` keeps each line whole). The text auto-sizes to fill the frame. `animation`: `["wave", "glow"]` (either or both) makes the letters ripple and a soft glow pulse behind them; tune with `glow_color`, `wave_height` (share of a line, default 0.12), `wave_seconds` (1.8) and `glow_seconds` (2.4). |
 | `clock` | The date and time styled like an iPhone lock screen ("Tuesday, October 13" over a large "6:42"), in the Pi's local time. `format` (`12h` default, no AM/PM, or `24h`), `color`, `date_color`, `shadow` (default `true`), `font`, `date_font`. Redrawn once a minute. |
 | `weather` | `units` (`imperial`/`metric`), optional `title`, optional `lat`/`lon`. Shows the current conditions with an icon (day/night aware), today's high and low, and a 3-day forecast with icons. Uses Open-Meteo; no API key needed. Set `font` (e.g. `assets/fonts/Inter-SemiBold.ttf`) to match the clock. |
@@ -298,6 +299,7 @@ These parts can't be tested off the hardware:
 ```bash
 scripts/prepare_media.sh ~/Movies/clip.mov                  # -> media/clip.mp4, 1080p30 H.264
 WIDTH=1280 scripts/prepare_media.sh ~/Movies/clip.mov       # smaller, for a smaller frame
+ROTATE=cw FPS=24 scripts/prepare_media.sh tall.mp4 "media/tall (landscape).mp4"   # portrait, sideways for "rotate": 270
 ```
 
 The Pi 4 decodes H.264 in hardware; other codecs (HEVC, AV1, VP9) and 4K files fall back to slow software decoding. The script needs `ffmpeg` (`brew install ffmpeg`). Sizing a video close to its frame's on-screen size also cuts upload work.

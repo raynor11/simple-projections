@@ -98,6 +98,7 @@ def _check_rect(rect, what):
 # Required fields per source type.
 SOURCE_REQUIRED = {
     "file": ("path",),
+    "sequence": ("clips", "start"),
     "text": ("text",),
     "weather": (),
     "clock": (),
@@ -105,6 +106,28 @@ SOURCE_REQUIRED = {
     "chromecast": ("device", "cast_name"),
     "airplay": ("device",),
 }
+
+
+def _check_sequence(source, what):
+    clips = source["clips"]
+    if not isinstance(clips, dict) or not clips:
+        raise ValueError(f"{what} sequence clips must be an object of named clips")
+    if source["start"] not in clips:
+        raise ValueError(f"{what} sequence start {source['start']!r} isn't one of its clips")
+    fade = source.get("fade_seconds", 0.4)
+    if not isinstance(fade, (int, float)) or fade < 0:
+        raise ValueError(f"{what} sequence fade_seconds must be 0 or more")
+    for name, clip in clips.items():
+        where = f"{what} sequence clip {name!r}"
+        if not isinstance(clip, dict) or "path" not in clip:
+            raise ValueError(f"{where} needs a path")
+        if clip.get("next", name) not in clips:
+            raise ValueError(f"{where} next {clip['next']!r} isn't one of the clips")
+        repeat = clip.get("repeat", 1)
+        bounds = repeat if isinstance(repeat, list) else [repeat]
+        if not (len(bounds) in (1, 2) and all(isinstance(v, int) and v >= 1 for v in bounds)
+                and bounds[0] <= bounds[-1]):
+            raise ValueError(f"{where} repeat must be a whole number from 1, or [min, max]")
 
 
 def _check_source(source, what):
@@ -116,6 +139,8 @@ def _check_source(source, what):
     for key in SOURCE_REQUIRED[kind]:
         if key not in source:
             raise ValueError(f"{what} {kind} source missing key: {key}")
+    if kind == "sequence":
+        _check_sequence(source, what)
     if source.get("decoder", "opencv") not in ("opencv", "gstreamer"):
         raise ValueError(f"{what} decoder must be \"opencv\" or \"gstreamer\"")
     if source.get("rotate", 0) not in (0, 90, 180, 270):
