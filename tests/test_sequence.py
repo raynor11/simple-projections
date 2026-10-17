@@ -14,7 +14,8 @@ from src.sources.sequence import SequenceSource
 
 
 CLIPS = {
-    'family': {'path': 'family.mp4', 'repeat': [2, 4], 'next': 'exit'},
+    'family': {'path': 'family.mp4', 'reverse': 'family-rev.mp4', 'end_reversed': True,
+               'repeat': [2, 5], 'next': 'exit'},
     'exit': {'path': 'exit.mp4', 'next': 'empty'},
     'empty': {'path': 'empty.mp4', 'repeat': [1, 3], 'next': 'entrance'},
     'entrance': {'path': 'entrance.mp4', 'next': 'family'},
@@ -22,22 +23,32 @@ CLIPS = {
 
 
 class FakePlayer(Source):
-    """Takes OPEN_SECONDS to open, then plays 8 s and finishes."""
+    """Opens in OPEN_SECONDS, starts when told to, plays 8 s and finishes."""
 
     OPEN_SECONDS = 0.3
 
-    def __init__(self, name, now):
+    def __init__(self, name, reversed_, software, now):
         super().__init__({'type': 'file'})
-        self.name = name
+        self.name, self.reversed, self.software = name, reversed_, software
         self.created = now
+        self.duration = 8.0
+        self.at = 'unset'
         self.started_at = None
         self.finished = False
         self.closed = False
 
+    @property
+    def hardware(self):
+        return not self.software and not self.finished
+
+    def go(self, at=None):
+        self.at = at
+
     def tick(self, now):
-        if self.started_at is None and now >= self.created + self.OPEN_SECONDS:
-            self.started_at = now
-        if self.started_at is not None and now >= self.started_at + 8.0:
+        ready = now >= self.created + self.OPEN_SECONDS
+        if self.started_at is None and ready and self.at != 'unset' and (self.at is None or now >= self.at):
+            self.started_at = now if self.at is None else max(self.at, self.created + self.OPEN_SECONDS)
+        if self.started_at is not None and now >= self.started_at + self.duration:
             self.finished = True
 
     def close(self):
@@ -53,9 +64,10 @@ class Harness:
         self.source._new_player = self._new_player
         self.source.set_target_size(1920, 1080)
         self.now = 0.0
+        self.max_hardware = 0
 
-    def _new_player(self, name):
-        player = FakePlayer(name, self.now)
+    def _new_player(self, name, reversed_, software):
+        player = FakePlayer(name, reversed_, software, self.now)
         self.players.append(player)
         return player
 
@@ -65,64 +77,81 @@ class Harness:
                 p.tick(self.now)
             self.source.poll(self.now)
             self.source.set_shown(True)
+            self.max_hardware = max(self.max_hardware, sum(p.hardware for p in self.players))
             self.now = round(self.now + step, 6)
+
+
+def runs(players):
+    out = []
+    for p in players:
+        if out and out[-1][0] == p.name:
+            out[-1][1].append(p)
+        else:
+            out.append([p.name, [p]])
+    return out
 
 
 def test_plays_the_cycle_with_repeats_within_range():
     h = Harness()
-    h.run(400)
-    names = [p.name for p in h.players]
-    # Collapse into runs: family x N, exit, empty x M, entrance, ...
-    runs = []
-    for n in names:
-        if runs and runs[-1][0] == n:
-            runs[-1][1] += 1
-        else:
-            runs.append([n, 1])
-    order = [r[0] for r in runs]
-    assert order[:8] == ['family', 'exit', 'empty', 'entrance'] * 2
-    for name, count in runs[:-1]:
+    h.run(600)
+    clips = runs(h.players)
+    assert [r[0] for r in clips[:8]] == ['family', 'exit', 'empty', 'entrance'] * 2
+    for name, plays in clips[:-1]:
         lo, hi = seq_mod.repeat_range(CLIPS[name])
-        assert lo <= count <= hi, (name, count)
+        assert lo <= len(plays) <= hi, (name, len(plays))
 
 
-def test_next_opens_only_after_the_current_finishes_then_fades_in():
+def test_bouncing_clip_alternates_direction_and_ends_backwards():
+    h = Harness()
+    h.run(600)
+    for name, plays in runs(h.players)[:-1]:
+        if name == 'family':
+            assert [p.reversed for p in plays] == [i % 2 == 1 for i in range(len(plays))]
+            assert len(plays) % 2 == 0                 # finishes on a backwards play
+
+
+def test_bounce_cuts_exactly_at_the_end_and_changes_fade():
     h = Harness(fade=0.4)
-    h.run(7.0)
-    first = h.players[0]
-    assert len(h.players) == 1                      # one decoder at a time
-    h.run(first.started_at + 8.1)
-    assert len(h.players) == 2 and first.finished
-    second = h.players[1]
-    assert [l[0] for l in h.source.layers()] == [first]   # last frame held while the next opens
-    h.run(h.now + FakePlayer.OPEN_SECONDS + 0.1)
-    h.run(second.started_at + 0.2)
-    layers = h.source.layers()
-    assert [l[0] for l in layers] == [first, second]
-    assert 0 < layers[1][1] < 1                     # mid-fade, drawn on top
-    h.run(second.started_at + 0.5)
-    assert first.closed
-    assert [l[0] for l in h.source.layers()] == [second]
-
-
-def test_no_fade_cuts_once_the_next_starts():
-    h = Harness(fade=0)
-    h.run(9.0)
+    h.run(0.6)
     first, second = h.players[:2]
-    h.run(second.started_at + 0.1)
-    assert first.closed
+    assert second.name == 'family' and second.reversed
+    assert second.at == pytest.approx(first.started_at + 8.0)   # bounce: straight cut
+    h.run(first.started_at + 8.05)
+    assert [l for l in h.source.layers()][-1] == (second, 1.0)
+    h.run(200)
+    exit_play = next(p for p in h.players if p.name == 'exit')
+    before = h.players[h.players.index(exit_play) - 1]
+    assert exit_play.at == pytest.approx(before.started_at + 7.6)   # change: fades over the end
+
+
+def test_fade_ramps_and_closes_the_outgoing_play():
+    h = Harness(fade=0.4)
+    h.run(200)
+    exit_play = next(p for p in h.players if p.name == 'exit')
+    before = h.players[h.players.index(exit_play) - 1]
+    assert before.closed
+    h2 = Harness(fade=0.4)
+    h2.run(exit_play.started_at + 0.2)
+    layers = h2.source.layers()
+    assert len(layers) == 2 and 0 < layers[1][1] < 1
+
+
+def test_never_two_hardware_decoders_at_once():
+    h = Harness()
+    h.run(600)
+    assert h.max_hardware == 1
+    assert {p.software for p in h.players} == {True, False}    # it alternates
 
 
 def test_a_clip_that_fails_to_open_is_skipped():
     h = Harness()
-    h.run(8.5)
+    h.run(1.0)
     second = h.players[1]
     second.tick = lambda now: None
     second.finished = True                          # failed: never started
-    h.run(9.0)
-    assert h.players[0].closed and h.source._current[1] is second
-    h.run(9.5)
-    assert len(h.players) == 3
+    h.run(3.0)
+    assert h.players[0].closed
+    assert len(h.players) >= 3 and h.source._current[2] is not second   # went straight on
 
 
 def test_hidden_releases_players_and_restarts_from_the_start():
@@ -144,7 +173,7 @@ def test_playback_draws_each_part_as_a_layer(monkeypatch):
     import src.playback as playback_module
     from src.playback import Playback
 
-    a, b = FakePlayer('a', 0), FakePlayer('b', 0)
+    a, b = FakePlayer('a', False, False, 0), FakePlayer('b', False, True, 0)
     for p in (a, b):
         p._publish(np.zeros((2, 2, 3), np.uint8))
 
@@ -187,3 +216,5 @@ def test_validation():
     del cfg['frames'][0]['source']['start']
     with pytest.raises(ValueError, match='start'):
         validate_config(cfg)
+    with pytest.raises(ValueError, match='end_reversed'):
+        validate_config(_config(clips={**CLIPS, 'exit': {'path': 'x', 'next': 'empty', 'end_reversed': True}}))

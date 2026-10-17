@@ -1,4 +1,5 @@
 import random
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -35,34 +36,55 @@ def smoothstep(t):
 
 class ClipPlayer(ThreadedSource):
     """
-    One play of one video, no looping, starting as soon as it's opened. At
-    the end it releases its decoder (sets `finished`) and holds the last
-    frame. The Pi 4's codec can't run two hardware decodes at once (it runs
-    out of memory and can hang the firmware), so a sequence only opens the
-    next clip once this one has finished.
+    One play of one video, no looping. The decoder opens and decodes the
+    first frame as soon as the player starts, then waits for go(), so the
+    clip starts on time. At the end it releases its decoder (sets
+    `finished`) and holds the last frame.
+
+    `software` forces FFmpeg decoding. The Pi 4's codec can't run two
+    hardware decodes at once (it runs out of memory and can hang the
+    firmware), so a sequence opens the next clip in software while the
+    current one is on the hardware decoder, and the other way round.
     """
 
     pixel_format = 'BGR'
 
-    def __init__(self, path, target_size, decoders):
+    def __init__(self, path, target_size, decoders, software=False):
         super().__init__({'type': 'file', 'path': path})
         self.target_size = target_size
-        self._decoders = decoders    # path -> decoder that worked, shared across plays
+        self.software = software
+        self._decoders = decoders    # path -> hardware decoder that worked, shared across plays
+        self._go = threading.Event()
+        self._at = None
+        self.decoder = SOFTWARE if software else None   # known once opened
+        self.duration = clip_info(path)[2]
         self.started_at = None       # when the first frame went on screen (monotonic)
         self.finished = False        # played to the end (or failed) and released the decoder
+
+    @property
+    def hardware(self):
+        """Whether this player holds (or may take) the hardware decoder."""
+        return self.decoder != SOFTWARE and not self.finished
+
+    def go(self, at=None):
+        """Start playing at monotonic time `at` (or as soon as it's ready)."""
+        self._at = at
+        self._go.set()
 
     def _run(self):
         path = self.cfg['path']
         fps, native, _ = clip_info(path)
         interval = 1.0 / fps
         size = decode_size(native, self.target_size)
-        cap, decoder = open_video(path, size, native, only=self._decoders.get(path))
+        only = SOFTWARE if self.software else self._decoders.get(path)
+        cap, decoder = open_video(path, size, native, only=only)
+        self.decoder = decoder
         if not cap.isOpened():
             print(f"Failed to open video: {path}")
             cap.release()
             self.finished = True
             return
-        if path not in self._decoders:
+        if decoder != SOFTWARE and path not in self._decoders:
             self._decoders[path] = decoder
             print(f"Video {Path(path).name}: {decoder} decoding"
                   + (f", at {size[0]}x{size[1]}" if size else ""))
@@ -84,6 +106,11 @@ class ClipPlayer(ThreadedSource):
             frame = read()
             if frame is None:
                 print(f"Video produced no frames: {path}")
+                return
+            while not self._go.wait(0.1):
+                if self._stop.is_set():
+                    return
+            if self._at is not None and self._stop.wait(max(0.0, self._at - time.monotonic())):
                 return
             self._publish(frame)
             self.started_at = next_time = time.monotonic()
@@ -107,14 +134,20 @@ class ClipPlayer(ThreadedSource):
 class SequenceSource(Source):
     """
     Plays named clips one after another: each plays a random number of
-    times within its "repeat" range, then moves on to its "next" clip. Every
-    change, including a clip repeating, fades the incoming play in over the
-    outgoing one's held last frame, so the seams don't jump. Only one clip
-    decodes at a time (see ClipPlayer).
+    times within its "repeat" range, then moves on to its "next" clip.
 
-    Draws as up to two layers (see layers()), blended on the GPU. While its
-    frame is hidden (e.g. while casting) for more than PAUSE_AFTER_SECONDS
-    the decoders are released; it starts over from "start" when shown.
+    A clip with a "reverse" file (itself played backwards) bounces: its
+    repeats alternate forwards and backwards and cut straight over, since
+    the frames match. "end_reversed" makes it always finish on a backwards
+    play (an even number of plays), for when its first frame leads into the
+    next clip better than its last. Any other change fades the incoming
+    clip in over the last fade_seconds of the outgoing one.
+
+    The next clip is opened ahead of time on the other kind of decoder
+    (see ClipPlayer), so it's ready the moment it's due. Draws as up to two
+    layers (see layers()), blended on the GPU. While its frame is hidden
+    (e.g. while casting) for more than PAUSE_AFTER_SECONDS the decoders are
+    released; it starts over from "start" when shown.
     """
 
     PAUSE_AFTER_SECONDS = 2.0
@@ -124,8 +157,9 @@ class SequenceSource(Source):
         super().__init__(cfg)
         self._rng = rng or random.Random()
         self._decoders = {}
-        self._current = None     # (clip name, player)
+        self._current = None     # (clip name, reversed, player)
         self._next = None
+        self._next_fades = False
         self._remaining = 0      # plays of the current clip still to come after this one
         self._shown = True
         self._hidden_since = None
@@ -136,8 +170,10 @@ class SequenceSource(Source):
     def fade(self):
         return max(0.0, float(self.cfg.get('fade_seconds', 0.4)))
 
-    def _new_player(self, name):
-        player = ClipPlayer(self.cfg['clips'][name]['path'], self.target_size, self._decoders)
+    def _new_player(self, name, reversed_, software):
+        clip = self.cfg['clips'][name]
+        player = ClipPlayer(clip['reverse'] if reversed_ else clip['path'], self.target_size,
+                            self._decoders, software=software)
         player.start()
         return player
 
@@ -153,11 +189,16 @@ class SequenceSource(Source):
     def _stop_players(self):
         for item in (self._current, self._next):
             if item:
-                item[1].close()
+                item[2].close()
         self._current = self._next = None
 
     def _plays(self, name):
-        return self._rng.randint(*repeat_range(self.cfg['clips'][name]))
+        clip = self.cfg['clips'][name]
+        lo, hi = repeat_range(clip)
+        plays = self._rng.randint(lo, hi)
+        if clip.get('end_reversed') and clip.get('reverse') and plays % 2:
+            plays = plays + 1 if plays < hi else max(2, plays - 1)
+        return plays
 
     def poll(self, now):
         self._now = now
@@ -170,15 +211,31 @@ class SequenceSource(Source):
                 return
             name = self.cfg['start']
             self._remaining = self._plays(name) - 1
-            self._current = (name, self._new_player(name))
+            self._current = (name, False, self._new_player(name, False, False))
+            self._current[2].go()
             return
-        name, player = self._current
+        name, reversed_, player = self._current
+        if player.started_at is None and not player.finished:
+            return
         if self._next is None:
-            if not player.finished:
-                return
-            next_name = name if self._remaining > 0 else self.cfg['clips'][name]['next']
-            self._next = (next_name, self._new_player(next_name))
-        elif self._next_alpha(now) >= 1.0 or (self._next[1].finished and self._next[1].started_at is None):
+            clip = self.cfg['clips'][name]
+            if self._remaining > 0:
+                next_name = name
+                bounce = bool(clip.get('reverse'))
+                next_reversed = not reversed_ if bounce else False
+            else:
+                next_name, bounce, next_reversed = clip['next'], False, False
+            self._next_fades = not bounce
+            # Never two hardware decodes at once: if this one may be on the
+            # hardware decoder, the next is opened in software.
+            nxt = self._new_player(next_name, next_reversed, software=player.hardware)
+            self._next = (next_name, next_reversed, nxt)
+            if player.started_at is None:    # the current one failed: go straight on
+                nxt.go()
+            else:
+                overlap = self.fade if self._next_fades else 0.0
+                nxt.go(player.started_at + max(0.0, player.duration - overlap))
+        elif self._next_alpha(now) >= 1.0 or (self._next[2].finished and self._next[2].started_at is None):
             player.close()
             next_name = self._next[0]
             if next_name == name and self._remaining > 0:
@@ -188,10 +245,10 @@ class SequenceSource(Source):
             self._current, self._next = self._next, None
 
     def _next_alpha(self, now):
-        started = self._next[1].started_at if self._next else None
+        started = self._next[2].started_at if self._next else None
         if started is None:
             return 0.0
-        if self.fade <= 0:
+        if self.fade <= 0 or not self._next_fades:
             return 1.0
         return smoothstep((now - started) / self.fade)
 
@@ -199,10 +256,10 @@ class SequenceSource(Source):
         """[(source, alpha), ...] to draw, bottom first."""
         out = []
         if self._current:
-            out.append((self._current[1], 1.0))
+            out.append((self._current[2], 1.0))
         alpha = self._next_alpha(self._now)
         if alpha > 0:
-            out.append((self._next[1], alpha))
+            out.append((self._next[2], alpha))
         return out
 
     def set_shown(self, shown):
@@ -220,4 +277,4 @@ class SequenceSource(Source):
         super().set_target_size(width, height)
         for item in (self._current, self._next):
             if item:
-                item[1].target_size = self.target_size
+                item[2].target_size = self.target_size

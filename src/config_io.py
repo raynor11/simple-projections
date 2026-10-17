@@ -128,6 +128,10 @@ def _check_sequence(source, what):
         if not (len(bounds) in (1, 2) and all(isinstance(v, int) and v >= 1 for v in bounds)
                 and bounds[0] <= bounds[-1]):
             raise ValueError(f"{where} repeat must be a whole number from 1, or [min, max]")
+        if "reverse" in clip and not (isinstance(clip["reverse"], str) and clip["reverse"]):
+            raise ValueError(f"{where} reverse must be the path of the clip played backwards")
+        if clip.get("end_reversed") and "reverse" not in clip:
+            raise ValueError(f"{where} end_reversed needs a reverse clip")
 
 
 def _check_source(source, what):
