@@ -11,6 +11,7 @@
 #                                                      (portrait turned sideways: use "rotate": 270)
 #   REVERSE=1 scripts/prepare_media.sh in.mp4 "out (reversed).mp4"
 #                                                      (backwards, for a sequence clip's "reverse")
+#   SMOOTH=8 scripts/prepare_media.sh in.mp4           (blend each frame with the 7 before it)
 #
 # Sizing videos close to their frame's on-screen size (e.g. 1280 wide for a
 # frame covering two thirds of the screen) cuts decoding and upload work.
@@ -18,7 +19,7 @@
 set -e
 
 if [ $# -lt 1 ]; then
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
 fi
 
@@ -41,6 +42,20 @@ if [ -n "${REVERSE:-}" ]; then
     BACKWARDS=",trim=start_frame=1,setpts=PTS-STARTPTS,reverse,trim=start_frame=1,setpts=PTS-STARTPTS"
 fi
 
+# SMOOTH=n blends each frame with the n-1 before it, weighted 1, 2, ...,
+# 2, 1. Some AI-generated clips move their fine texture in steps (every 4th
+# frame, with a bigger jump every 32), which shimmers on a big screen;
+# SMOOTH=8 evens that out while keeping the detail, but ghosts fast
+# movement, so keep it for mostly still clips.
+SMOOTHING=""
+if [ -n "${SMOOTH:-}" ]; then
+    WEIGHTS=""
+    for ((i = 1; i <= SMOOTH; i++)); do
+        WEIGHTS="$WEIGHTS $(( i < SMOOTH + 1 - i ? i : SMOOTH + 1 - i ))"
+    done
+    SMOOTHING=",tmix=frames=${SMOOTH}:weights='${WEIGHTS# }'"
+fi
+
 if [ "$(cd "$(dirname "$IN")" && pwd)/$(basename "$IN")" = "$(cd "$(dirname "$OUT")" 2>/dev/null && pwd)/$(basename "$OUT")" ]; then
     echo "Output would overwrite the input; give a different output path" >&2
     exit 1
@@ -51,7 +66,7 @@ mkdir -p "$(dirname "$OUT")"
 
 ffmpeg -hide_banner -y -i "$IN" \
     -an \
-    -vf "${TURN}scale='min(${WIDTH},iw)':-2:flags=lanczos,fps=${FPS},format=yuv420p${BACKWARDS}" \
+    -vf "${TURN}scale='min(${WIDTH},iw)':-2:flags=lanczos,fps=${FPS}${SMOOTHING},format=yuv420p${BACKWARDS}" \
     -c:v libx264 -profile:v high -level:v 4.1 -preset slow -crf 20 \
     -movflags +faststart \
     "$OUT"
