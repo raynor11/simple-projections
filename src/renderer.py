@@ -31,6 +31,8 @@ uniform vec4 uv_crop;
 uniform float alpha;
 uniform float dim;
 uniform int swap_rb;
+uniform vec3 levels_scale;
+uniform vec3 levels_offset;
 out vec4 color;
 void main() {
     vec2 win = (gl_FragCoord.xy - viewport.xy) / viewport.zw;
@@ -45,6 +47,8 @@ void main() {
     if (swap_rb == 1) {
         c = c.bgra;   // BGR(A) frames straight from OpenCV
     }
+    // Per-source colour correction, e.g. the Pi ISP's TV-range output.
+    c.rgb = clamp(c.rgb * levels_scale + levels_offset, 0.0, 1.0);
     color = vec4(c.rgb * dim, c.a * alpha);
 }
 """
@@ -52,6 +56,8 @@ void main() {
 # Desktop GL 3.3 first (macOS, or the Pi with the Mesa version override the
 # service sets); GLSL 1.40 is the fallback for the Pi 4's native GL 3.1.
 GLSL_VERSIONS = ("#version 330 core\n", "#version 140\n")
+
+NO_LEVELS = ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))   # Source.levels: no correction
 
 # Some GPU drivers convert 3-channel uploads on the CPU internally. Set
 # PM_UPLOAD_RGBA=1 to pad frames to 4 channels instead (compare both with
@@ -244,6 +250,7 @@ class CanvasRenderer:
             gl.texture.build_mipmaps()
         gl.version = version
         gl.swap_rb = source.pixel_format.startswith('BGR')
+        gl.levels = source.levels or NO_LEVELS
         return True
 
     def _update_geometry(self, gl, corners):
@@ -268,6 +275,9 @@ class CanvasRenderer:
         self.program['uv_crop'].value = tuple(float(v) for v in layer.crop)
         self.program['alpha'].value = float(max(0.0, min(1.0, layer.alpha)))
         self.program['swap_rb'].value = 1 if getattr(gl, 'swap_rb', False) else 0
+        scale, offset = getattr(gl, 'levels', NO_LEVELS)
+        self.program['levels_scale'].value = tuple(float(v) for v in scale)
+        self.program['levels_offset'].value = tuple(float(v) for v in offset)
         gl.vao.render(mgl.TRIANGLES)
 
     def close(self):

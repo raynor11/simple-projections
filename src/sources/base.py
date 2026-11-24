@@ -31,6 +31,9 @@ class Source:
     """
 
     pixel_format = 'RGBA'   # or 'BGR' / 'BGRA'
+    # Colour correction the renderer applies on the GPU, as
+    # ((r, g, b) scale, (r, g, b) offset), or None for none.
+    levels = None
 
     def __init__(self, cfg):
         self.cfg = dict(cfg)

@@ -76,6 +76,18 @@ def hardware_pipelines(path, size=None, isp=True):
 
 
 HW_ISP = 'hardware (v4l2h264dec + v4l2convert)'
+# The ISP's YUV-to-RGB conversion outputs TV-range RGB (about 16-235)
+# instead of 0-255, whatever colorimetry the caps ask for, so its frames
+# look washed out next to FFmpeg's: about 24% brighter in these mostly dark
+# videos. The renderer undoes it on the GPU with this per-channel
+# (scale, offset), in RGB order, offsets as a fraction of full scale.
+# Fitted against FFmpeg's output on the Pi; it matches to within half a level.
+ISP_LEVELS = ((1.1525, 1.1625, 1.1625), (-20.2 / 255, -18.72 / 255, -20.1 / 255))
+
+
+def decoder_levels(decoder):
+    """The (scale, offset) colour correction frames from `decoder` need, or None."""
+    return ISP_LEVELS if decoder == HW_ISP else None
 HW_CPU = 'hardware (v4l2h264dec + videoconvert)'
 SOFTWARE = 'software (FFmpeg)'
 
@@ -215,6 +227,7 @@ class VideoFileSource(ThreadedSource):
         if not cap.isOpened():
             print(f"Failed to open video: {path}")
             return
+        self.levels = decoder_levels(decoder)
         print(f"Video {Path(path).name}: {decoder} decoding"
               + (f", at {size[0]}x{size[1]}" if size else ""))
         next_time = time.monotonic()

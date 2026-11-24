@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 
 from .base import FrameRing, Source, ThreadedSource
-from .file import SOFTWARE, decode_size, open_video
+from .file import SOFTWARE, decode_size, decoder_levels, open_video
 
 
 @lru_cache(maxsize=None)
@@ -79,6 +79,7 @@ class ClipPlayer(ThreadedSource):
         only = SOFTWARE if self.software else self._decoders.get(path)
         cap, decoder = open_video(path, size, native, only=only)
         self.decoder = decoder
+        self.levels = decoder_levels(decoder)
         if not cap.isOpened():
             print(f"Failed to open video: {path}")
             cap.release()
